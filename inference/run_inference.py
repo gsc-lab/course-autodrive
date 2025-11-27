@@ -14,7 +14,6 @@ ANGLE_LIST = [30, 60, 90, 120, 150]
 
 def main():
     drive.activate_jetson_pwm()
-    drive.set_servo_angle(SERVO_STEPS[SERVO_INDEX])
     
     # 1) TensorRT 엔진 로드
     engine_path = "models/pilotnet_steering.trt"
