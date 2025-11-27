@@ -6,7 +6,7 @@ import numpy as np
 
 from preprocessor.RCPreprocessor import RCPreprocessor
 from inference.engine_loader import TRTInferenceEngine
-import datacollector.hw_control.drive as drive   # RC car servo control module
+import datacollector.hw_control.drive as drive   
 import datacollector.hw_control.input_utils as input_utils
 
 
@@ -165,7 +165,6 @@ def main():
         # 자원 정리
         cap.release()
         cv2.destroyAllWindows()
-        # 필요하면 중립각/정지 처리도 여기서
         drive.smooth_stop()
         print("[INFO] Inference stopped, resources cleaned up.")
 
