@@ -49,7 +49,7 @@ def check_pca9685(bus: int, address: int, role: str, hint: str = "") -> CheckRes
         return CheckResult(name, None, "리눅스가 아니므로 건너뜀")
     dev = f"/dev/i2c-{bus}"
     if not os.path.exists(dev) or not os.access(dev, os.R_OK | os.W_OK):
-        return CheckResult(name, False, f"{dev} 를 열 수 없습니다 (i2c_bus 점검 참조)")
+        return CheckResult(name, False, f"{role}용 PCA9685 를 확인할 수 없습니다: {dev} 를 열 수 없음 (i2c_bus 점검 참조)")
     try:
         from common.hw.pca9685 import probe
         info = probe(bus, address)

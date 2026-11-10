@@ -148,7 +148,13 @@ def test_fallback_to_keyboard_when_ds4_missing(monkeypatch):
             return []
     import common.inputs.keyboard as kb
     monkeypatch.setattr(kb, "KeyboardInput", FakeKeyboard)
-    dev = fac.create_input(cfg, None)           # Windows/PC 에는 evdev 가 없어 DS4 생성이 실패한다
+
+    class NoPad(InputDevice):                   # 패드가 실제로 연결된 보드에서도 같은 결과가 나오게 DS4 생성을 실패시킨다
+        def __init__(self, cfg_):
+            raise RuntimeError("DS4 없음")
+    import common.inputs.ds4 as ds4
+    monkeypatch.setattr(ds4, "DS4Input", NoPad)
+    dev = fac.create_input(cfg, None)
     assert dev.name == "keyboard"
     with pytest.raises(Exception):
         fac.create_input(cfg, "ds4")             # 명시 지정이면 대체하지 않는다
