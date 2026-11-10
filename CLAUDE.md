@@ -11,10 +11,9 @@ small CNN. Code and comments are in Korean. Conversation with the user is in Kor
 
 The hardware moved from Jetson Nano to **Jetson Orin Nano / Super** (JetPack 6.x, TensorRT 10, Python 3.10)
 and the software is being rewritten from scratch with new features. **Everything under `legacy/` is the
-old Jetson Nano code** (moved there with `git mv` on 2026-11-04; history is preserved). Do not extend it, do
-not reuse its hardware code, and do not treat its conventions as binding. It stays only as a reference for
-what the old pipeline did and will be deleted once the new pipeline runs end to end (its `app/pycuda` tarball and
-scratch `test.py` were already removed on 2026-11-10).
+old Jetson Nano code.** Since 2026-11-10 it is **untracked and gitignored** (user decision: not worth committing);
+it exists only as a local reference on the professor's PC, and the old code remains in git history before
+commit `d2e0de0`. Do not extend it, do not reuse its hardware code, and do not treat its conventions as binding.
 
 Hardware bring-up (2026-11-09): servo (PCA9685 0x40 CH0) and both motors (PCA9685 0x41 CH0/CH1 → MDD10A) were
 verified on the reference car with `scripts/pin_test.py servo` / `motor 15`, and a first real `collector` drive with the
@@ -196,7 +195,7 @@ invert flag); thumbnail filmstrip; ←/→ step, PageUp/PageDown ×10, Home/End,
 then Delete excludes it; Ctrl+Z undo; frames inside `marks.csv` intervals are pre-flagged; live per-class
 counts and ratios; "데이터셋 만들기" writes the zip described above.
 
-## Legacy notes (`legacy/`, for reference only)
+## Legacy notes (`legacy/`, untracked local reference only — also in git history before `d2e0de0`)
 
 Old pipeline: `legacy/datacollector/img-collector.py` → `img-cleaner.py` → `legacy/training/train_pilotnet.py`
 (PilotNet, 5-class classification, exports ONNX) → trtexec → `legacy/inference/run_inference.py`. It was

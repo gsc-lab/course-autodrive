@@ -19,7 +19,6 @@
 | trainer/ (예정) | PC | 학습 → ONNX + model_meta.json |
 | inference/ (예정) | Jetson | TensorRT 추론 자율주행 |
 | [docs/](docs/) | | [Jetson 설정](docs/jetson-setup.md), 배선도, 보고서 |
-| [legacy/](legacy/) | | Jetson Nano 시절 코드 (참고용, 실행하지 않음) |
 
 설정은 저장소 루트의 [config.yaml](config.yaml) 하나다. 조향 클래스, PCA9685 주소·채널, 카메라, 녹화 간격을 여기서 바꾼다.
 
