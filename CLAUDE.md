@@ -59,8 +59,8 @@ image); `docs/jetson-setup.md` has the notes. Provisioning a fresh image must go
 does not perform.
 
 On the Jetson, create the venv first with `uv venv --system-site-packages` so JetPack's tensorrt /
-cuda-python are visible, then `uv sync --extra jetson` (see `docs/jetson-setup.md`). torch comes from the
-PyTorch cu128 index on x86-64 only; the `jetson` extra never installs torch. `tool.uv.environments`
+cuda-python are visible, then `uv sync` (see `docs/jetson-setup.md`); evdev is a core dependency with a linux marker, not an extra, because plain `uv run` strips extras. torch comes from the
+PyTorch cu128 index on x86-64 only; Jetson never installs torch (no torch marker for aarch64). `tool.uv.environments`
 restricts the lock to x86-64 Windows/Linux and aarch64 Linux.
 
 Everything runs from the repo root as a module (`python -m collector`); `pyproject.toml` sets `pythonpath`

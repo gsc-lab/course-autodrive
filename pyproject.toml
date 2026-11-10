@@ -4,16 +4,18 @@ version = "0.1.0"
 description = "Lane-keeping RC car (Jetson Orin Nano) — collector / curator / trainer / inference"
 readme = "readme.md"
 requires-python = ">=3.10,<3.14"   # Jetson JetPack 6 = 3.10, PySide6/torch 휠은 3.13 까지
-# 모든 프로그램이 공통으로 쓰는 것만. 플랫폼별 추가 의존성은 아래 extras 로.
+# 모든 프로그램이 공통으로 쓰는 것. 플랫폼 조건은 마커로 건다: `uv run` 은 환경을 여기에 정확히 맞추므로
+# Jetson 에서 쓰는 것을 extra 로 빼 두면 옵션 없이 `uv run` 한 순간 지워진다 (2026-11-10 실제로 겪음).
 dependencies = [
     "pyyaml>=6.0",
     "numpy>=1.26; platform_machine != 'aarch64'",
     "numpy>=1.24,<2; platform_machine == 'aarch64'",   # Jetson: 시스템 TensorRT/OpenCV 가 numpy 1.x 기준
     "opencv-python>=4.9",
+    "evdev>=1.7; sys_platform == 'linux'",             # DualShock 4 입력 (Jetson). tensorrt/cuda 는 JetPack 시스템 패키지 → --system-site-packages
 ]
 
 [project.optional-dependencies]
-# PC: curator(PySide6), trainer(torch)
+# PC 전용: curator(PySide6), trainer(torch)
 pc = [
     "PySide6>=6.7",
     "pillow>=10.0",
@@ -21,11 +23,6 @@ pc = [
     "torch>=2.7",
     "torchvision>=0.22",
     "onnx>=1.16",
-]
-# Jetson Orin Nano: collector, inference  (tensorrt / cuda-python 은 JetPack 시스템 패키지 → --system-site-packages)
-# 서보·모터는 I2C(/dev/i2c) 의 PCA9685 로 구동하므로 GPIO 라이브러리가 필요 없다.
-jetson = [
-    "evdev>=1.7; sys_platform == 'linux'",
 ]
 
 [dependency-groups]

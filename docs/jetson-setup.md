@@ -23,7 +23,7 @@ uv run python -m collector --check      # 카메라·보드·입력 초기화 �
 uv run python -m collector              # 수집 시작
 ```
 
-코드가 바뀌면 `git pull && uv sync --extra jetson` 만 하면 된다.
+코드가 바뀌면 `git pull && uv sync` 만 하면 된다.
 
 ## 학생 배포: 골든 이미지 복제 (권장)
 
@@ -45,7 +45,7 @@ uv run python -m collector              # 수집 시작
    ```bash
    cd ~/course-autodrive && bash scripts/jetson_setup.sh pair
    ```
-   코드 갱신은 `git pull && uv sync --extra jetson`.
+   코드 갱신은 `git pull && uv sync`.
 
 주의: 복제한 카드가 골든 카드보다 크면 남는 공간은 쓰이지 않는다(첫 부팅 자동 확장은 이미 끝난 상태). 필요하면 `sudo parted /dev/mmcblk0 resizepart 1 100%` 후 `sudo resize2fs /dev/mmcblk0p1`.
 
@@ -57,7 +57,7 @@ uv run python -m collector              # 수집 시작
 | 그룹 | i2c, input, bluetooth, video 에 사용자 추가 | 새로 추가된 그룹은 재로그인 후 적용. i2c 그룹이 없으면 `/dev/i2c-7` 을 열 수 없다 |
 | bluez | `/etc/bluetooth/input.conf` 에 `ClassicBondedOnly=false` | bluez 5.56+ 기본값은 본딩 전 DS4 의 연결을 거부해 페어링이 실패한다(로그: `Access denied: org.bluez.Error.Rejected`). 수업용 개인 이미지이므로 허용 (2026-11-04 결정) |
 | udev | DS4 라이트바 90-ds4-leds.rules | sony 계열 HID 드라이버가 있을 때만 의미 있음 |
-| uv | 설치 후 `uv venv --system-site-packages --python /usr/bin/python3` → `uv sync --extra jetson` | JetPack 의 tensorrt·cuda 가 venv 안에서 보이게. torch/PySide6 는 받지 않음 |
+| uv | 설치 후 `uv venv --system-site-packages --python /usr/bin/python3` → `uv sync` | JetPack 의 tensorrt·cuda 가 venv 안에서 보이게. evdev 는 기본 의존성(리눅스 마커)이라 `uv run` 만 해도 유지된다. torch/PySide6 는 받지 않음 |
 
 `verify` 는 위 항목에 더해 `i2cdetect -y -r 7` 로 0x40(서보용)과 0x41(모터용)이 모두 응답하는지 본다. 0x70 이 함께 보이는 것은
 모든 PCA9685 가 듣는 공통 주소라 정상이다.

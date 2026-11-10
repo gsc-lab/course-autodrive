@@ -39,7 +39,7 @@ bash scripts/jetson_setup.sh pair       # DualShock 4 페어링
 uv run python -m collector
 ```
 
-학생은 GitHub 에서 `git clone` 으로 받고, 갱신은 `git pull && uv sync --extra jetson` 으로 한다. 수집한 `dataset/` 은 git 에 올리지 않고 scp 나 USB 로 PC 에 가져온다.
+학생은 GitHub 에서 `git clone` 으로 받고, 갱신은 `git pull && uv sync` 으로 한다. 수집한 `dataset/` 은 git 에 올리지 않고 scp 나 USB 로 PC 에 가져온다.
 
 ## 🔌 하드웨어 요약
 

@@ -92,8 +92,8 @@ EOF
         warn ".venv 가 시스템 패키지를 보지 못합니다 → 다시 만듭니다"
         rm -rf .venv; uv venv --system-site-packages --python "$SYS_PY" >/dev/null
     fi
-    uv sync --extra jetson --group dev >/dev/null
-    ok "uv sync --extra jetson"
+    uv sync --group dev >/dev/null
+    ok "uv sync (evdev 포함)"
     sudo udevadm control --reload-rules && sudo udevadm trigger || true
 
     step "완료"
