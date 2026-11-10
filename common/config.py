@@ -125,6 +125,7 @@ class DS4Config:
     stick_deadzone: float = 0.08
     rumble: bool = True
     lightbar: bool = True
+    link_timeout_sec: float = 0.5   # 패드의 HID 보고(초당 수백 개)가 이 시간 동안 없으면 링크 끊김 → 정지. 0 이면 감시 안 함
 
 
 @dataclass

@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import logging
 import os
+import select
 import signal
 import sys
+import threading
 import time
 from datetime import datetime
 from typing import List, Optional
@@ -24,6 +26,7 @@ log = logging.getLogger("collector")
 
 LOOP_HZ = 50
 STATUS_HZ = 5
+WATCHDOG_SEC = 1.0      # 주 루프가 이보다 오래 멈추면 감시 스레드가 모터를 끈다 (PCA9685 는 스스로 멈추지 않는다)
 
 
 class PreflightError(RuntimeError):
@@ -65,11 +68,24 @@ def preflight(cfg: Config, mock: bool, input_kind: str, ds4_soft: bool, skip: bo
 
 
 def _safe_write(text: str) -> None:
-    """stdout 이 끊겨도(SSH 종료, 파이프 닫힘) 예외를 내지 않는다."""
+    """터미널에 상태를 쓰되 절대 멈추지 않는다.
+
+    SSH 가 '끊긴 채 닫히지 않으면'(Wi-Fi 끊김, 노트북 절전) 아무도 터미널을 읽지 않아 출력 버퍼가 몇 초 만에 가득 차고,
+    보통의 write 는 거기서 영원히 멈춘다. 그러면 주 루프가 서고 PCA9685 는 마지막 명령을 유지해 차가 계속 달린다
+    (2026-11-10 실제 발생). 그래서 쓰기 전에 버퍼에 자리가 있는지 보고, 없으면 그 줄을 버린다.
+    """
     try:
-        sys.stdout.write(text)
-        sys.stdout.flush()
-    except (OSError, ValueError):
+        fd = sys.stdout.fileno()
+    except (AttributeError, ValueError, OSError):
+        return
+    try:
+        if hasattr(select, "poll"):                       # POSIX
+            p = select.poll()
+            p.register(fd, select.POLLOUT)
+            if not p.poll(0):
+                return                                    # 아무도 읽지 않는 터미널: 상태줄을 버린다
+        os.write(fd, text.encode(errors="replace"))
+    except (OSError, ValueError):                         # EIO/EPIPE: 터미널이 아예 사라짐
         pass
 
 
@@ -147,11 +163,14 @@ class Collector:
         st = self.logic.state
         period = 1.0 / LOOP_HZ
         self._print_help()
+        self._last_tick = time.monotonic()
+        threading.Thread(target=self._watchdog, name="watchdog", daemon=True).start()
         try:
             while not st.quit:
                 t0 = time.monotonic()
                 self._step(t0)
-                dt = time.monotonic() - t0
+                self._last_tick = time.monotonic()
+                dt = self._last_tick - t0
                 if dt < period:
                     time.sleep(period - dt)
         except Exception:
@@ -163,6 +182,27 @@ class Collector:
             log.error("종료 원인: %s", st.error)
             return 2
         return 0
+
+    # ------------------------------------------------------------------ 감시
+    def _watchdog(self) -> None:
+        """주 루프가 어디선가 멈추면(터미널 쓰기, 카메라, 장치 호출 …) 모터만이라도 끈다."""
+        while not self.logic.state.quit:
+            time.sleep(0.2)
+            self._watchdog_check(time.monotonic())
+
+    def _watchdog_check(self, now: float) -> bool:
+        """주 루프가 WATCHDOG_SEC 이상 틱을 못 찍었고 모터가 돌고 있으면 즉시 정지하고 종료를 건다. 정지했으면 True."""
+        if now - self._last_tick <= WATCHDOG_SEC or self.vehicle is None or self.vehicle.state.speed == 0:
+            return False
+        st = self.logic.state
+        log.error("주 루프가 %.1f초 멈춤 → 감시 스레드가 비상 정지", now - self._last_tick)
+        st.error = st.error or "주 루프 멈춤 → 비상 정지"
+        st.quit = True
+        try:
+            self.vehicle.stop(smooth=False)
+        except Exception as e:
+            log.error("비상 정지 실패: %s", e)
+        return True
 
     def _step(self, now: float) -> None:
         logic, st, s = self.logic, self.logic.state, self.session

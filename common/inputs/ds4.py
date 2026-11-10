@@ -184,6 +184,63 @@ def find_ds4_device(fallback_name: str = "Wireless Controller"):
 
 
 # ---------------------------------------------------------------------------
+# 링크 감시: 패드는 가만히 있어도 초당 수백 개의 HID 보고를 보낸다 (hid-generic, 블루투스, 2026-11-10 실측 약 450/s).
+# evdev 는 값이 바뀔 때만 이벤트를 주므로 "조용함"과 "끊김"을 구분하지 못한다. hidraw 를 같이 읽어 보고가 끊기면
+# 링크가 죽은 것으로 보고 즉시 정지시킨다 (커널이 장치를 지우는 데는 블루투스 감시 시간 ~20초가 걸린다).
+# ---------------------------------------------------------------------------
+def find_ds4_hidraw(uniq: Optional[str], name: str, sys_root: str = "/sys/class/hidraw") -> Optional[str]:
+    """evdev 장치와 같은 패드(HID_UNIQ = 패드 MAC)의 hidraw 경로. 없으면 이름으로, 그래도 없으면 None."""
+    by_name = None
+    for d in sorted(glob.glob(f"{sys_root}/hidraw*")):
+        try:
+            with open(f"{d}/device/uevent") as f:
+                info = dict(line.strip().split("=", 1) for line in f if "=" in line)
+        except OSError:
+            continue
+        path = f"/dev/{os.path.basename(d)}"
+        if uniq and info.get("HID_UNIQ", "").lower() == uniq.lower():
+            return path
+        if name and name in info.get("HID_NAME", "") and by_name is None:
+            by_name = path
+    return by_name
+
+
+class HidrawLink:
+    """hidraw 보고를 세어 링크 생사를 판단한다. reader() 는 보고 한 개(bytes) 또는 None(지금은 없음)을 돌려준다."""
+
+    def __init__(self, reader, timeout_sec: float, now: Optional[float] = None, close=None):
+        self._reader, self._close = reader, close
+        self.timeout = float(timeout_sec)
+        self.last_report = time.monotonic() if now is None else now
+        self.reports = 0
+
+    @classmethod
+    def open(cls, path: str, timeout_sec: float) -> "HidrawLink":
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+
+        def reader():
+            try:
+                return os.read(fd, 128)
+            except BlockingIOError:
+                return None
+        return cls(reader, timeout_sec, close=lambda: os.close(fd))
+
+    def poll(self, now: float) -> bool:
+        """쌓인 보고를 비우고 살아 있으면 True. timeout 동안 보고가 없으면 False."""
+        for _ in range(2000):               # 한 번에 너무 오래 붙들지 않게
+            data = self._reader()
+            if not data:
+                break
+            self.reports += 1
+            self.last_report = now
+        return (now - self.last_report) <= self.timeout
+
+    def close(self) -> None:
+        if self._close:
+            self._close()
+            self._close = None
+
+
 class DS4Input(InputDevice):
     name = "ds4"
     requires_deadman = True
@@ -208,8 +265,20 @@ class DS4Input(InputDevice):
         self._blink_on = True
         self._last_blink = time.monotonic()
         self._rumble_thread: Optional[threading.Thread] = None
-        log.info("DS4 연결: %s (%s) driver=%s layout=%s lightbar=%s",
-                 self.dev.name, self.dev.path, self.driver, self.layout, bool(self._leds))
+        self.link: Optional[HidrawLink] = None
+        self._link_lost = False
+        if cfg.link_timeout_sec > 0:
+            path = find_ds4_hidraw(getattr(self.dev, "uniq", None), cfg.device_name)
+            try:
+                if path is None:
+                    raise OSError("hidraw 장치를 찾지 못함")
+                self.link = HidrawLink.open(path, cfg.link_timeout_sec)
+            except OSError as e:
+                log.warning("패드 링크 감시를 쓸 수 없습니다 (%s). 연결이 조용히 끊기면 커널이 알아챌 때까지(~20초) "
+                            "마지막 명령이 유지됩니다. udev 규칙 91-ds4-hidraw.rules 와 input 그룹을 확인하세요", e)
+        log.info("DS4 연결: %s (%s) driver=%s layout=%s lightbar=%s 링크감시=%s",
+                 self.dev.name, self.dev.path, self.driver, self.layout, bool(self._leds),
+                 f"{cfg.link_timeout_sec:g}s" if self.link else "없음")
         self.set_status(STATUS_IDLE)
 
     # ------------------------------------------------------------------ API
@@ -226,6 +295,16 @@ class DS4Input(InputDevice):
         except OSError as e:  # ENODEV: 블루투스 끊김
             log.error("DS4 장치 소실: %s", e)
             events.append(InputEvent(EventKind.DEVICE_LOST))
+        if self.link is not None and not self._link_lost:
+            try:
+                alive = self.link.poll(time.monotonic())
+            except OSError as e:
+                log.error("DS4 hidraw 읽기 실패: %s", e)
+                alive = False
+            if not alive:
+                self._link_lost = True
+                log.error("DS4 보고가 %.1f초 동안 없음 → 링크 끊김으로 보고 정지", self.link.timeout)
+                events.append(InputEvent(EventKind.DEVICE_LOST))
         self._tick_blink()
         return events
 
@@ -297,6 +376,8 @@ class DS4Input(InputDevice):
             self.dev.ungrab()
         except Exception:
             pass
+        if self.link is not None:
+            self.link.close()
         self.dev.close()
 
 

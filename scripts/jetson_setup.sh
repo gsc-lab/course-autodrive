@@ -78,6 +78,13 @@ SUBSYSTEM=="leds", KERNEL=="*054C:09CC*", RUN+="/bin/chmod 0666 /sys/class/leds/
 EOF
         ok "udev: 90-ds4-leds.rules"
     fi
+    # DS4 hidraw: 수집기가 HID 보고 흐름으로 패드 연결 생사를 감시한다 (끊기면 0.5초 안에 정지). 기본 권한은 root 전용.
+    if [[ ! -f /etc/udev/rules.d/91-ds4-hidraw.rules ]]; then
+        sudo tee /etc/udev/rules.d/91-ds4-hidraw.rules >/dev/null <<'EOF'
+SUBSYSTEM=="hidraw", KERNELS=="*054C:09CC*", MODE="0660", GROUP="input"
+EOF
+        ok "udev: 91-ds4-hidraw.rules"
+    fi
 
     # DualShock 4 페어링: bluez 5.56+ 기본값(ClassicBondedOnly=true)은 본딩 전 클래식 HID 연결을 거부해
     # DS4 가 붙지 못한다. 수업용 개인 이미지이므로 허용한다 (관리자 결정, 2026-11-04).

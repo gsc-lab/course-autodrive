@@ -193,7 +193,14 @@ without side effects at import time (no device opens, no terminal mode changes a
   `input.ds4.deadman` defaults to `false`; setting it to `true` restores "drive only while L1 is held". The no-input
   timer (`safety.deadman_sec`) applies to keyboard toggle driving only, never while a trigger is held.
 - Safety: stop + center on SIGTERM/SIGINT and on evdev device loss; `deadman_sec` auto-stop; startup
-  checks. **SIGHUP is ignored when driving with the pad** (user decision 2026-11-10: SSH closing must not stop the car;
+  checks. **Three guards added 2026-11-10 after the car twice kept driving straight with a dead joystick:**
+  (1) `_safe_write` polls the terminal for writability and drops the status line instead of blocking — a hung
+  (not closed) SSH session fills the pty buffer in seconds and a blocking write would freeze the main loop while the
+  PCA9685 holds the last command; (2) a watchdog thread (`WATCHDOG_SEC` = 1 s) stops the motor and quits if the main
+  loop stops ticking for any reason; (3) `DS4Input` also reads the pad's hidraw node (`HidrawLink`): the DS4 streams
+  ~450 HID reports/s even when idle, so `input.ds4.link_timeout_sec` (0.5 s) of silence means the Bluetooth link is dead
+  → `DEVICE_LOST` → stop, instead of waiting ~20 s for the kernel to remove the device (needs udev rule
+  `91-ds4-hidraw.rules`, installed by `jetson_setup.sh`). **SIGHUP is ignored when driving with the pad** (user decision 2026-11-10: SSH closing must not stop the car;
   the pad is the controller and the dot matrix shows status; the keyboard mode still stops on SIGHUP). A flock in
   `dataset/collector.lock` (`collector/lock.py`) refuses a second collector and prints the `kill <PID>` command. Startup
   checks for the I2C bus and both PCA9685 boards, camera, disk space.
