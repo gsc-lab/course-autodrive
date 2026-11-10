@@ -56,6 +56,14 @@ cmd_install() {
     sudo apt-get install -y -qq git curl python3-dev build-essential bluez v4l-utils i2c-tools >/dev/null
     ok "git curl python3-dev build-essential bluez v4l-utils i2c-tools"
 
+    # 재부팅 원인을 나중에 볼 수 있게 저널을 디스크에 남긴다 (기본은 메모리라 재부팅하면 지워진다. 2026-11-10 주행 중 보드가
+    # 재시작했는데 이전 부팅 기록이 없어 원인을 못 찾았다)
+    if [[ ! -d /var/log/journal ]]; then
+        sudo mkdir -p /var/log/journal && sudo systemd-tmpfiles --create --prefix /var/log/journal >/dev/null 2>&1 || true
+        sudo systemctl restart systemd-journald || true
+        ok "systemd 저널 영구 저장 (/var/log/journal)"
+    fi
+
     step "3/5 그룹과 udev 규칙"
     sudo groupadd -f gpio                      # /dev/spidev* 가 root:gpio 다
     local me; me=$(id -un)
