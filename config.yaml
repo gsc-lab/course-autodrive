@@ -120,7 +120,7 @@ display:
   driver: max7219
   spi_dev: /dev/spidev0.0   # SPI1 CS0. jetson-io 로 spi1 을 켜야 생긴다 (scripts/jetson_setup.sh install)
   intensity: 3              # 밝기 0~15
-  rotate: 0                 # 모듈을 돌려 달았으면 90 | 180 | 270
+  rotate: 90                # 모듈을 돌려 달았으면 0 | 90 | 180 | 270. 기준 차에서는 90 (핀 헤더가 위로 오게 달았을 때)
   flip: false               # 좌우가 거울처럼 보이면 true
   blink_hz: 2.0
 
