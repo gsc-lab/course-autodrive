@@ -1,0 +1,61 @@
+[project]
+name = "course-autodrive"
+version = "0.1.0"
+description = "Lane-keeping RC car (Jetson Orin Nano) — collector / curator / trainer / inference"
+readme = "readme.md"
+requires-python = ">=3.10,<3.14"   # Jetson JetPack 6 = 3.10, PySide6/torch 휠은 3.13 까지
+# 모든 프로그램이 공통으로 쓰는 것만. 플랫폼별 추가 의존성은 아래 extras 로.
+dependencies = [
+    "pyyaml>=6.0",
+    "numpy>=1.26; platform_machine != 'aarch64'",
+    "numpy>=1.24,<2; platform_machine == 'aarch64'",   # Jetson: 시스템 TensorRT/OpenCV 가 numpy 1.x 기준
+    "opencv-python>=4.9",
+]
+
+[project.optional-dependencies]
+# PC: curator(PySide6), trainer(torch)
+pc = [
+    "PySide6>=6.7",
+    "pillow>=10.0",
+    "pandas>=2.0",
+    "torch>=2.7",
+    "torchvision>=0.22",
+    "onnx>=1.16",
+]
+# Jetson Orin Nano: collector, inference  (tensorrt / cuda-python 은 JetPack 시스템 패키지 → --system-site-packages)
+# 서보·모터는 I2C(/dev/i2c) 의 PCA9685 로 구동하므로 GPIO 라이브러리가 필요 없다.
+jetson = [
+    "evdev>=1.7; sys_platform == 'linux'",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+# ---------------------------------------------------------------------------
+# uv
+# ---------------------------------------------------------------------------
+[tool.uv]
+# 잠금 파일을 만들 때 고려할 환경: 개발 PC(Windows/x86-64 Linux)와 Jetson(aarch64 Linux)
+environments = [
+    "sys_platform == 'win32' and platform_machine == 'AMD64'",
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'linux' and platform_machine == 'aarch64'",
+]
+
+# torch CUDA 빌드는 PyPI 가 아니라 PyTorch 인덱스에서 받는다 (PC 전용. Jetson 은 torch 를 쓰지 않음)
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu128", marker = "sys_platform == 'win32' or (sys_platform == 'linux' and platform_machine == 'x86_64')" },
+]
+torchvision = [
+    { index = "pytorch-cu128", marker = "sys_platform == 'win32' or (sys_platform == 'linux' and platform_machine == 'x86_64')" },
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
