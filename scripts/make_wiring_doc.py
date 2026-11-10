@@ -53,6 +53,12 @@ NET: List[Tuple[str, str, str, str, str]] = [
     ("D5", "J5.a", "MDDC.DIR1", "22AWG", "방향 → 1번 채널"),
     ("D6", "J5.b", "MDDC.DIR2", "22AWG", "방향 → 2번 채널"),
     ("D7", "PCA2.CH0G", "MDDC.GND", "22AWG", "모터 신호의 기준 접지"),
+    # 상태 표시용 도트 매트릭스 (선택). Jetson 전원 영역 안에서만 이어지고 차체와는 무관하다
+    ("X1", "JET.2", "DM.VCC", "듀폰", "도트 매트릭스 전원 5 V"),
+    ("X2", "JET.20", "DM.GND", "듀폰", "도트 매트릭스 접지"),
+    ("X3", "JET.19", "DM.DIN", "듀폰", "SPI 데이터"),
+    ("X4", "JET.23", "DM.CLK", "듀폰", "SPI 클럭"),
+    ("X5", "JET.24", "DM.CS", "듀폰", "SPI 선택"),
 ]
 WIRE_IDS = [r[0] for r in NET]
 
@@ -71,6 +77,10 @@ PORT_LABEL: Dict[str, str] = {
     "UBEC.IN+": "UBEC 입력 +", "UBEC.IN-": "UBEC 입력 −", "UBEC.OUT+": "UBEC 출력 +", "UBEC.OUT-": "UBEC 출력 −",
     "PCA1.TV+": "서보용 보드 단자대 V+", "PCA1.TGND": "서보용 보드 단자대 GND",
     "JET.1": "Jetson 핀 1 (3.3 V)", "JET.3": "Jetson 핀 3 (SDA)", "JET.5": "Jetson 핀 5 (SCL)", "JET.6": "Jetson 핀 6 (GND)",
+    "JET.2": "Jetson 핀 2 (5 V)", "JET.20": "Jetson 핀 20 (GND)", "JET.19": "Jetson 핀 19 (SPI MOSI)",
+    "JET.23": "Jetson 핀 23 (SPI SCK)", "JET.24": "Jetson 핀 24 (SPI CS0)",
+    "DM.VCC": "도트 매트릭스 VCC", "DM.GND": "도트 매트릭스 GND", "DM.DIN": "도트 매트릭스 DIN",
+    "DM.CLK": "도트 매트릭스 CLK", "DM.CS": "도트 매트릭스 CS",
     "PCA1.VCC": "서보용 보드 6핀 헤더 VCC", "PCA1.SDA": "서보용 보드 6핀 헤더 SDA",
     "PCA1.SCL": "서보용 보드 6핀 헤더 SCL", "PCA1.GND": "서보용 보드 6핀 헤더 GND",
     "PCA1.VCC2": "서보용 보드 반대쪽 헤더 VCC", "PCA1.SDA2": "서보용 보드 반대쪽 헤더 SDA",
@@ -88,13 +98,15 @@ PORT_LABEL: Dict[str, str] = {
 GROUND_IDS = ["G1", "G2", "G3", "G4", "I4", "C4", "D7"]
 POWER_IDS = ["P1", "P2", "P3", "P4", "P5", "G1", "G2", "G3", "G4", "M1", "M2", "M3", "M4"]
 SIGNAL_IDS = ["I1", "I2", "I3", "I4", "C1", "C2", "C3", "C4", "S1", "S2", "S3", "D1", "D2", "D3", "D4", "D5", "D6", "D7"]
+DISPLAY_IDS = ["X1", "X2", "X3", "X4", "X5"]
 
 # 선 종류별 색 (CSS 변수)과 굵기
 KIND = {"P": ("--w-plus", 4.0), "G": ("--w-gnd", 4.0), "M": ("--w-motor", 3.0),
-        "I": ("--w-sig", 2.2), "C": ("--w-sig", 2.2), "S": ("--w-sig", 2.2), "D": ("--w-sig", 2.2)}
+        "I": ("--w-sig", 2.2), "C": ("--w-sig", 2.2), "S": ("--w-sig", 2.2), "D": ("--w-sig", 2.2), "X": ("--w-sig", 2.2)}
 OVERRIDE = {"P5": ("--w-servo", 4.0), "S2": ("--w-servo", 3.0), "S3": ("--w-gnd", 3.0),
             "I1": ("--w-vcc", 2.2), "C1": ("--w-vcc", 2.2),
-            "I4": ("--w-gnd", 2.2), "C4": ("--w-gnd", 2.2), "D7": ("--w-gnd", 2.2)}
+            "I4": ("--w-gnd", 2.2), "C4": ("--w-gnd", 2.2), "D7": ("--w-gnd", 2.2),
+            "X1": ("--w-plus", 2.2), "X2": ("--w-gnd", 2.2)}
 
 
 def wire_style(wid: str) -> Tuple[str, float]:
@@ -342,10 +354,20 @@ def fig_signal() -> Diagram:
     d.t(52, 166, "Jetson Orin Nano", 14, bold=True)
     for (pin, name), y in zip((("1", "3.3 V"), ("3", "SDA"), ("5", "SCL"), ("6", "GND")), ys.values()):
         d.t(250, y + 4, f"핀 {pin} · {name}", 12, "end", mono=True); d.port("JET." + pin, 260, y)
-    d.t(52, 346, "다른 헤더 핀은 쓰지 않음", 11, color="--muted")
-    d.box(40, 450, 220, 56, "--muted"); d.t(150, 483, "USB 카메라", 13, "middle")
-    d.extra.append('<path d="M150 450 L150 360" stroke="var(--muted)" stroke-width="2" fill="none"/>')
-    d.t(159, 410, "USB", 11, color="--muted", mono=True)
+    for pin, x in (("2", 70), ("20", 110), ("19", 150), ("23", 190), ("24", 230)):
+        d.t(x, 350, f"핀 {pin}", 10, "middle", mono=True); d.port("JET." + pin, x, 360)
+
+    # 도트 매트릭스 (선택)
+    d.box(40, 440, 220, 80, "--muted")
+    d.t(150, 492, "도트 매트릭스 MAX7219", 13, "middle", bold=True)
+    d.t(150, 510, "상태 표시 (선택). 없어도 주행에는 지장 없음", 10, "middle", "--muted")
+    for n, x in (("VCC", 70), ("GND", 110), ("DIN", 150), ("CLK", 190), ("CS", 230)):
+        d.t(x, 460, n, 10, "middle", mono=True); d.port("DM." + n, x, 440)
+
+    # USB 카메라
+    d.box(290, 440, 110, 56, "--muted"); d.t(345, 473, "USB 카메라", 12, "middle")
+    d.extra.append('<path d="M260 345 L345 345 L345 440" stroke="var(--muted)" stroke-width="2" fill="none"/>')
+    d.t(300, 338, "USB", 10, color="--muted", mono=True)
 
     # 서보용 보드
     d.box(410, 140, 280, 220, "--w-sig")
@@ -415,6 +437,8 @@ def fig_signal() -> Diagram:
     for wid, x in (("D2", 865), ("D3", 925), ("D5", 975), ("D6", 1035)):
         d.wire(wid); d.t(x - 8, 472, wid, anchor="end", **wl)
     d.wire("D7"); d.t(1124, 430, "D7", **wl)
+    for wid, x in (("X1", 70), ("X2", 110), ("X3", 150), ("X4", 190), ("X5", 230)):
+        d.wire(wid); d.t(x - 5, 405, wid, anchor="end", **wl)
     return d
 
 
@@ -579,7 +603,7 @@ def check_coverage(figs: List[Diagram]) -> List[str]:
     ids = [r[0] for r in NET]
     if len(ids) != len(set(ids)):
         errs.append("선 ID 중복")
-    if sorted(POWER_IDS + SIGNAL_IDS) != sorted(ids):
+    if sorted(POWER_IDS + SIGNAL_IDS + DISPLAY_IDS) != sorted(ids):
         errs.append("표에 빠지거나 두 번 들어간 선이 있음")
     ends = [p for r in NET for p in (r[1], r[2])]
     dup = sorted({p for p in ends if ends.count(p) > 1})
@@ -713,6 +737,7 @@ def build_html(figs: List[Diagram]) -> str:
 <tr><td class="k">조향 서보 LD-1501MG</td><td>앞바퀴 조향</td><td>검정 GND, 빨강 6 V, 흰색 신호</td></tr>
 <tr><td class="k">퓨즈 F1</td><td>과전류 차단</td><td>10 A. 주전원 스위치는 없다. 전원을 끊을 때는 주행 배터리 커넥터를 뽑는다</td></tr>
 <tr><td class="k">J2, J3</td><td>+ 분배, 공통 접지</td><td>WAGO 221 3구. 굵은 전원선만 물린다</td></tr>
+<tr><td class="k">도트 매트릭스 MAX7219</td><td>주행 상태 표시 (선택)</td><td>Jetson SPI 에 직결, 5 V. 없어도 주행에는 지장 없다 (<code>display.enabled: false</code>)</td></tr>
 <tr><td class="k">J4, J5</td><td>모터 속도 신호(J4)와 방향 신호(J5)를 MDD10A 의 두 채널로 나눈다</td><td>WAGO 221 3구. 1번에 보드에서 온 선, 2·3번에 MDD10A 로 가는 선. 22AWG 또는 더 굵은 선만 물린다</td></tr>
 </tbody></table></div>
 <p>Jetson 헤더는 출력 구동력이 약해 서보를 직접 움직이지 못했으므로 신호는 모두 PCA9685 에서 냅니다. PCA9685 는 보드 하나가 한 주파수만 내므로 서보용(50 Hz)과 모터용(1.5 kHz)을 따로 둡니다.</p>
@@ -726,9 +751,9 @@ def build_html(figs: List[Diagram]) -> str:
 
 <section class="wide">
 <h2>그림 2. 신호 배선</h2>
-<div class="legend"><span class="l-vcc">논리 전원 3.3 V</span><span class="l-sig">신호</span><span class="l-gnd">접지</span><span class="l-servo">서보 전원 6 V</span></div>
-<div class="scroll">{signal.svg("신호 배선도. Jetson 핀 1, 3, 5, 6 이 서보용 보드의 VCC, SDA, SCL, GND 로 간다. 서보용 보드 반대쪽 헤더에서 같은 네 신호가 모터용 보드로 이어진다. 서보용 보드 채널 0 의 세 핀에 서보를 꽂는다. 모터용 보드 채널 0 의 PWM 핀은 J4 로, 채널 1 의 PWM 핀은 J5 로 가고, J4 에서 PWM1 과 PWM2 로, J5 에서 DIR1 과 DIR2 로 나뉜다. 채널 0 의 GND 핀이 MDD10A 제어 헤더 GND 로 간다.")}</div>
-<p class="cap">Jetson 의 네 가닥이 서보용 보드를 거쳐 모터용 보드로 이어집니다. 속도는 J4, 방향은 J5 에서 MDD10A 의 두 채널로 나뉘어 두 모터가 항상 같은 신호를 받습니다. MDD10A 핀과 모터용 보드 GND 핀의 실제 위치는 그림 3 에 있습니다.</p>
+<div class="legend"><span class="l-vcc">논리 전원 3.3 V</span><span class="l-plus">5 V (Jetson)</span><span class="l-sig">신호</span><span class="l-gnd">접지</span><span class="l-servo">서보 전원 6 V</span></div>
+<div class="scroll">{signal.svg("신호 배선도. Jetson 핀 1, 3, 5, 6 이 서보용 보드의 VCC, SDA, SCL, GND 로 간다. 서보용 보드 반대쪽 헤더에서 같은 네 신호가 모터용 보드로 이어진다. 서보용 보드 채널 0 의 세 핀에 서보를 꽂는다. 모터용 보드 채널 0 의 PWM 핀은 J4 로, 채널 1 의 PWM 핀은 J5 로 가고, J4 에서 PWM1 과 PWM2 로, J5 에서 DIR1 과 DIR2 로 나뉜다. 채널 0 의 GND 핀이 MDD10A 제어 헤더 GND 로 간다. Jetson 아래쪽 핀 2, 20, 19, 23, 24 는 상태 표시용 도트 매트릭스의 VCC, GND, DIN, CLK, CS 로 간다.")}</div>
+<p class="cap">Jetson 의 네 가닥이 서보용 보드를 거쳐 모터용 보드로 이어집니다. 속도는 J4, 방향은 J5 에서 MDD10A 의 두 채널로 나뉘어 두 모터가 항상 같은 신호를 받습니다. MDD10A 핀과 모터용 보드 GND 핀의 실제 위치는 그림 3 에 있습니다. 도트 매트릭스(X1~X5)는 Jetson 전원 영역 안에서만 이어지는 선택 부품입니다.</p>
 </section>
 
 <h2 class="pagebreak">2. 배선 목록</h2>
@@ -737,11 +762,14 @@ def build_html(figs: List[Diagram]) -> str:
 {wire_table(POWER_IDS)}
 <h3>신호 ({len(SIGNAL_IDS)}가닥)</h3>
 {wire_table(SIGNAL_IDS)}
+<h3>상태 표시 도트 매트릭스 ({len(DISPLAY_IDS)}가닥, 선택)</h3>
+{wire_table(DISPLAY_IDS)}
 <ul>
 <li>I1~I4 와 C1~C4 는 각각 한 묶음의 케이블로 만듭니다. 6핀 헤더의 OE 와 V+ 는 비웁니다.</li>
 <li>S1~S3 는 서보의 3핀 커넥터 그대로입니다. 검정이 보드 가장자리 쪽입니다.</li>
 <li>D1~D7 은 한 다발로 묶어 모터 전력선과 떨어뜨립니다. <strong>WAGO 221 은 24AWG 보다 가는 선을 물지 못하므로</strong> 듀폰 점퍼선(26~28AWG) 대신 22AWG 선을 쓰고, 한쪽은 피복을 벗겨 WAGO 에, 다른 쪽은 듀폰 암 단자를 압착해 보드와 MDD10A 핀에 꽂습니다.</li>
 <li>PCA9685 출력 하나가 MDD10A 입력 둘을 구동해도 입력 전류가 µA 수준이라 문제없습니다.</li>
+<li>X1~X5 는 듀폰 암-암 점퍼선 그대로 꽂습니다. Jetson 핀 2(5 V)와 핀 1(3.3 V)을 헷갈리지 않게 봅니다.</li>
 <li>USB 카메라는 Jetson 의 USB 포트에 꽂습니다. 표에는 넣지 않았습니다.</li>
 </ul>
 
@@ -749,7 +777,7 @@ def build_html(figs: List[Diagram]) -> str:
 <p>서보 커넥터 안의 검정선(S3)을 빼면 접지선은 일곱 가닥입니다. 전류가 돌아오는 선 넷과 신호의 기준이 되는 가는 선 셋입니다.</p>
 {wire_table(GROUND_IDS)}
 <ul>
-<li><strong>Jetson 의 접지선은 I4 하나뿐입니다.</strong> 그래서 모터나 서보 전류가 Jetson 을 지나갈 길이 없습니다. Jetson 은 플라스틱 기둥으로 고정합니다. 금속 기둥은 접지선을 하나 더 만듭니다.</li>
+<li><strong>차체로 가는 Jetson 의 접지선은 I4 하나뿐입니다.</strong> (X2 는 Jetson 과 도트 매트릭스 사이의 선이라 차체와 무관합니다.) 그래서 모터나 서보 전류가 Jetson 을 지나갈 길이 없습니다. Jetson 은 플라스틱 기둥으로 고정합니다. 금속 기둥은 접지선을 하나 더 만듭니다.</li>
 <li><strong>모터 신호의 기준 접지는 D7 입니다.</strong> 신호선과 같은 다발로 다녀야 모터 전류의 영향이 신호에 실리지 않습니다.</li>
 <li><strong>굵은 접지선 G2, G3, G4 는 확실히 조입니다.</strong> 하나가 빠져도 전류가 가는 접지선(D7, C4)으로 돌아 흘러 겉으로는 동작하지만, 가는 선이 뜨거워지고 퓨즈는 이를 막지 못합니다.</li>
 </ul>
@@ -774,7 +802,8 @@ def build_html(figs: List[Diagram]) -> str:
 <tr><td class="id">1</td><td><code>uv run python scripts/pin_test.py scan</code></td><td>0x40 서보용 보드, 0x41 모터용 보드가 모두 "응답"</td><td>둘 다 없으면 Jetson 케이블(I1~I4), 0x41 만 없으면 보드 사이 케이블(C1~C4)과 A0 납땜(그림 4)</td></tr>
 <tr><td class="id">2</td><td><code>uv run python scripts/pin_test.py servo</code></td><td>서보가 60° → 120° → 90° 로 움직인다</td><td>안 움직이면 UBEC 출력(P5, G4)과 서보 커넥터(S1~S3) 방향. 5절 참조</td></tr>
 <tr><td class="id">3</td><td><code>uv run python scripts/pin_test.py motor</code></td><td>두 바퀴가 같은 방향으로 10초 돌고, 멈춘 뒤 반대 방향으로 10초 돈다</td><td>한 방향만 돌거나 정지 명령에 빨라지면 속도·방향 선이 바뀐 것(D1 과 D4). 한쪽만 안 돌면 그쪽 모터 전력선과 J4·J5 레버. 두 바퀴가 서로 반대로 돌면 한쪽 모터의 전력선 두 가닥을 맞바꾼다</td></tr>
-<tr><td class="id">4</td><td><code>uv run python -m collector --check</code></td><td>"점검 완료" 와 함께 서보가 중앙으로 한 번 움직인다</td><td>실패한 점검 이름(i2c_bus, pca9685:서보, pca9685:모터 …)과 메시지를 따라 고친다</td></tr>
+<tr><td class="id">4</td><td><code>uv run python scripts/dotmatrix_test.py status</code> (도트 매트릭스를 달았을 때)</td><td>정지 ■ → 전진 ▲ 와 속도 막대 → 후진 ▼ → 조향 점 좌우 → 녹화 모서리 점멸 → X 점멸</td><td>아무것도 안 켜지면 <code>bash scripts/jetson_setup.sh verify</code> 의 SPI 항목과 X1~X5. 화살표가 돌아가 있으면 <code>display.rotate</code></td></tr>
+<tr><td class="id">5</td><td><code>uv run python -m collector --check</code></td><td>"점검 완료" 와 함께 서보가 중앙으로 한 번 움직인다</td><td>실패한 점검 이름(i2c_bus, pca9685:서보, pca9685:모터 …)과 메시지를 따라 고친다</td></tr>
 </tbody></table></div>
 <p>3번에서 전진 명령에 차가 뒤로 가면 선은 그대로 두고 <code>config.yaml</code> 의 <code>hardware.dir_forward_high</code> 를 <code>false</code> 로 바꿉니다.</p>
 

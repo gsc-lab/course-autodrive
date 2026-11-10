@@ -44,7 +44,7 @@ def test_real_figures_are_clean_and_cover_the_netlist():
     for f in figs:
         assert f.lint() == [], f.name
     ids = [r[0] for r in m.NET]
-    assert len(ids) == len(set(ids)) == len(m.WIRE_IDS) == 31
+    assert len(ids) == len(set(ids)) == len(m.WIRE_IDS) == 36
     assert set(m.GROUND_IDS) <= set(ids)
 
 
@@ -62,3 +62,4 @@ def test_motor_signals_split_at_j4_and_j5():
     assert {rows["D5"][1], rows["D6"][1]} == {"MDDC.DIR1", "MDDC.DIR2"} and all(rows[w][0].startswith("J5.") for w in ("D5", "D6"))
     assert rows["D7"] == ("PCA2.CH0G", "MDDC.GND")
     assert not any("SW1" in p for r in m.NET for p in r[1:3]), "주전원 스위치는 없다"
+    assert [rows[w][0] for w in m.DISPLAY_IDS] == ["JET.2", "JET.20", "JET.19", "JET.23", "JET.24"]   # 도트 매트릭스: 5 V, GND, MOSI, SCK, CS0

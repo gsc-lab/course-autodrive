@@ -6,7 +6,8 @@
 검증한 환경: JetPack 6.2.1 (L4T R36.4.7), Ubuntu 22.04, Python 3.10, TensorRT 10.3, Orin Nano Developer Kit Super.
 
 서보와 모터 신호는 모두 **I2C 에 연결한 PCA9685 두 장**이 낸다 (서보용 0x40, 모터용 0x41). Jetson 40핀 헤더에서는 I2C(핀 3, 5),
-3.3 V(핀 1), GND(핀 6) 네 핀만 쓰므로 핀먹스나 GPIO 설정이 필요 없다. 배선은 `docs/wiring.pdf`.
+3.3 V(핀 1), GND(핀 6) 네 핀을 쓰고, 선택 부품인 상태 표시 도트 매트릭스가 SPI1(핀 19/23/24)과 5 V(핀 2), GND(핀 20)을 쓴다.
+배선은 `docs/wiring.pdf`.
 
 ## 빠른 절차
 
@@ -54,7 +55,8 @@ uv run python -m collector              # 수집 시작
 | 단계 | 내용 | 비고 |
 |---|---|---|
 | 패키지 | git curl python3-dev build-essential bluez v4l-utils i2c-tools | evdev 가 소스에서 빌드되므로 python3-dev 필요. i2c-tools 는 `i2cdetect` |
-| 그룹 | i2c, input, bluetooth, video 에 사용자 추가 | 새로 추가된 그룹은 재로그인 후 적용. i2c 그룹이 없으면 `/dev/i2c-7` 을 열 수 없다 |
+| 그룹 | i2c, input, bluetooth, video, gpio 에 사용자 추가 | 새로 추가된 그룹은 재로그인 후 적용. i2c 는 `/dev/i2c-7`, gpio 는 `/dev/spidev0.0`(도트 매트릭스) 때문 |
+| SPI1 | `config-by-function.py -o dt spi1` (도트 매트릭스용, 헤더 핀 19/21/23/24/26) | 바뀌면 재부팅 필요. jetson-io 를 쓰는 유일한 항목 |
 | bluez | `/etc/bluetooth/input.conf` 에 `ClassicBondedOnly=false` | bluez 5.56+ 기본값은 본딩 전 DS4 의 연결을 거부해 페어링이 실패한다(로그: `Access denied: org.bluez.Error.Rejected`). 수업용 개인 이미지이므로 허용 (2026-11-04 결정) |
 | udev | DS4 라이트바 90-ds4-leds.rules | sony 계열 HID 드라이버가 있을 때만 의미 있음 |
 | uv | 설치 후 `uv venv --system-site-packages --python /usr/bin/python3` → `uv sync` | JetPack 의 tensorrt·cuda 가 venv 안에서 보이게. evdev 는 기본 의존성(리눅스 마커)이라 `uv run` 만 해도 유지된다. torch/PySide6 는 받지 않음 |
@@ -80,6 +82,26 @@ uv run python -m collector --check             # 시작 점검: i2c_bus, pca9685
 
 PCA9685 는 통신이 끊겨도 마지막 출력을 유지한다. 주행 중 I2C 가 끊기면 모터는 그 속도로 계속 돌고, 세울 방법은 배터리 커넥터를
 뽑는 것뿐이다 (차에 주전원 스위치가 없다). 첫 시험은 반드시 바퀴를 띄우고 한다.
+
+## 상태 표시 도트 매트릭스 (선택)
+
+MAX7219 8×8 모듈을 Jetson 헤더에 직결한다 (추가 부품 없음): VCC → 핀 2 (5 V), GND → 핀 20, DIN → 핀 19, CS → 핀 24, CLK → 핀 23.
+`install` 이 jetson-io 로 SPI1 을 켜고(재부팅 필요) `/dev/spidev0.0` 이 생긴다. 사용자는 `gpio` 그룹이어야 한다.
+Jetson 의 3.3 V 신호는 MAX7219 규격(HIGH 3.5 V)보다 조금 낮지만 2026-11-10 실기에서 10분 연속 전송에 깨짐이 없어 직결로 쓴다.
+
+| 화면 | 뜻 |
+|---|---|
+| 위 5행 ▲ / ▼ / ■ | 전진 / 후진 / 정지. 녹화 중이면 위 양 모서리 점이 깜빡인다 |
+| 7행 점 2개 | 조향 위치 (왼쪽 끝 = `steering.min`, 가운데 = 직진) |
+| 8행 막대 | 속도 (8칸 = 100 %) |
+| X 점멸 | 오류 (카메라 끊김 등) |
+
+```bash
+uv run python scripts/dotmatrix_test.py          # 무늬 10개
+uv run python scripts/dotmatrix_test.py status   # 수집기가 그리는 상태 화면 9가지
+```
+화살표가 돌아가 보이면 `config.yaml` 의 `display.rotate`(90/180/270) 또는 `flip` 을 바꾼다. 모듈이 없으면 수집기가 경고만 남기고
+표시 없이 주행한다 (`display.enabled: false` 로 끌 수도 있다).
 
 ## 수동 절차 (스크립트가 실패했을 때)
 

@@ -140,6 +140,18 @@ class SafetyConfig:
 
 
 @dataclass
+class DisplayConfig:
+    """상태 표시용 8×8 도트 매트릭스 (MAX7219, Jetson SPI1 직결). 없어도 주행에는 지장이 없다."""
+    enabled: bool = True
+    driver: str = "max7219"
+    spi_dev: str = "/dev/spidev0.0"   # 헤더 핀 19/23/24 = SPI1 CS0
+    intensity: int = 3                # 밝기 0~15
+    rotate: int = 0                   # 모듈을 돌려 단 방향에 맞춤: 0 | 90 | 180 | 270
+    flip: bool = False                # 좌우가 거울처럼 보이면 true
+    blink_hz: float = 2.0             # 녹화·오류 표시 깜빡임
+
+
+@dataclass
 class PreprocessConfig:
     crop_top_ratio: float = 0.4
     crop_bottom_ratio: float = 1.0
@@ -157,6 +169,7 @@ class Config:
     recording: RecordingConfig = field(default_factory=RecordingConfig)
     input: InputConfig = field(default_factory=InputConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
+    display: DisplayConfig = field(default_factory=DisplayConfig)
     preprocess: PreprocessConfig = field(default_factory=PreprocessConfig)
     source_path: Optional[str] = None  # 어디서 읽었는지 (스냅샷에는 포함하지 않음)
 
@@ -276,6 +289,16 @@ def validate(cfg: Config) -> None:
     r = cfg.recording
     if not (0 < r.interval_min <= r.interval_sec <= r.interval_max):
         raise ConfigError("recording.interval_min <= interval_sec <= interval_max 이어야 합니다")
+
+    d = cfg.display
+    if d.driver not in ("max7219",):
+        raise ConfigError(f"display.driver 는 max7219 여야 합니다: {d.driver!r}")
+    if not (0 <= d.intensity <= 15):
+        raise ConfigError("display.intensity 는 0~15 여야 합니다")
+    if d.rotate not in (0, 90, 180, 270):
+        raise ConfigError("display.rotate 는 0, 90, 180, 270 중 하나여야 합니다")
+    if not (0.2 <= float(d.blink_hz) <= 10):
+        raise ConfigError("display.blink_hz 는 0.2~10 이어야 합니다")
 
     if cfg.input.primary not in ("ds4", "keyboard"):
         raise ConfigError("input.primary 는 ds4 또는 keyboard 여야 합니다")

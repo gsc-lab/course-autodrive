@@ -43,6 +43,7 @@ uv run python -m collector             # Jetson: DualShock 4; add --input keyboa
 uv run python -m collector --check     # Jetson: preflight (I2C bus, both PCA9685 boards) + open camera/input, then exit (servo centers once)
 uv run python -m collector --skip-checks -v   # bypass preflight (debugging only), debug log to dataset/collector.log
 uv run python scripts/pin_test.py scan|servo|motor|servo-all|servo-hold   # Jetson: I2C scan / actuator tests (wheels off the ground)
+uv run python scripts/dotmatrix_test.py [status|stress|off]              # Jetson: MAX7219 status display test
 bash scripts/jetson_setup.sh install|verify|pair|prepare-image   # Jetson provisioning (idempotent), see docs/jetson-setup.md
 ```
 
@@ -101,9 +102,15 @@ suspecting software. `scripts/pin_test.py scan` lists the I2C addresses that ans
 `collector --check` runs `check_i2c_bus` and `check_pca9685` for both boards (`common/hw/checks.py`).
 
 Hard rules that come from the hardware:
-- **I2C only.** Programs must verify `/dev/i2c-7` access and both PCA9685 boards (0x40, 0x41) at startup and refuse to
-  run with a clear message naming the missing board. Never touch the header's PWM/GPIO pins, jetson-io, Jetson.GPIO or
-  `busybox devmem`. PCA9685 keeps its last output when I2C drops, so stop logic must always write duty 0 last.
+- **Actuators are I2C only.** Programs must verify `/dev/i2c-7` access and both PCA9685 boards (0x40, 0x41) at startup
+  and refuse to run with a clear message naming the missing board. Never drive the header's PWM/GPIO pins, never use
+  Jetson.GPIO or `busybox devmem`. PCA9685 keeps its last output when I2C drops, so stop logic must always write duty 0 last.
+- **The only jetson-io use is SPI1 for the optional MAX7219 status display** (`common/display/`, header pins 19 MOSI /
+  23 SCK / 24 CS0 plus 2 = 5 V and 20 = GND, `/dev/spidev0.0`, user in group `gpio`). It is wired directly with 3.3 V
+  logic although the MAX7219 datasheet asks for 3.5 V: tested 2026-11-10 with 10 minutes of continuous pattern
+  changes without a glitch, so no level shifter. The display is optional: `create_display` returns `NullDisplay`
+  when `display.enabled` is false, the device is missing or the open fails, and the collector keeps driving.
+  `scripts/jetson_setup.sh install` enables spi1 (reboot needed); `scripts/dotmatrix_test.py status` previews the screens.
 - Motor driver is Cytron MDD10A: one DIR line + PWM duty per channel (no IN1/IN2 pairs). Both channels receive the
   same PWM and DIR through WAGO splitters J4/J5, so the two rear motors always receive the same command.
 - Servo is powered by a 6 V UBEC, not by the Jetson. The Jetson has its own USB-PD power bank. The PCA9685 terminal
@@ -115,7 +122,8 @@ Hard rules that come from the hardware:
 ```
 common/      shared by every program: config loading, filename format/parse, steering class
              quantization, image preprocessing, hardware drivers (Jetson-only, lazy-imported),
-             input devices (DualShock 4 via evdev, keyboard via terminal raw mode)
+             input devices (DualShock 4 via evdev, keyboard via terminal raw mode),
+             display/ (optional MAX7219 8×8 status display over SPI; glyphs.py is pure and tested)
 collector/   Jetson. Drives the car with a DualShock 4, records frames to dataset/<session>/
 curator/     PC. PySide6 GUI to review sessions, exclude frames, build a dataset zip
 trainer/     PC. Trains from dataset zips, exports ONNX + model_meta.json

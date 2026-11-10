@@ -100,6 +100,7 @@ pre { font-family: var(--font-mono); font-size: 13px; background: var(--paper); 
 <tr><td class="k">조향 서보 LD-1501MG</td><td>앞바퀴 조향</td><td>검정 GND, 빨강 6 V, 흰색 신호</td></tr>
 <tr><td class="k">퓨즈 F1</td><td>과전류 차단</td><td>10 A. 주전원 스위치는 없다. 전원을 끊을 때는 주행 배터리 커넥터를 뽑는다</td></tr>
 <tr><td class="k">J2, J3</td><td>+ 분배, 공통 접지</td><td>WAGO 221 3구. 굵은 전원선만 물린다</td></tr>
+<tr><td class="k">도트 매트릭스 MAX7219</td><td>주행 상태 표시 (선택)</td><td>Jetson SPI 에 직결, 5 V. 없어도 주행에는 지장 없다 (<code>display.enabled: false</code>)</td></tr>
 <tr><td class="k">J4, J5</td><td>모터 속도 신호(J4)와 방향 신호(J5)를 MDD10A 의 두 채널로 나눈다</td><td>WAGO 221 3구. 1번에 보드에서 온 선, 2·3번에 MDD10A 로 가는 선. 22AWG 또는 더 굵은 선만 물린다</td></tr>
 </tbody></table></div>
 <p>Jetson 헤더는 출력 구동력이 약해 서보를 직접 움직이지 못했으므로 신호는 모두 PCA9685 에서 냅니다. PCA9685 는 보드 하나가 한 주파수만 내므로 서보용(50 Hz)과 모터용(1.5 kHz)을 따로 둡니다.</p>
@@ -214,10 +215,11 @@ pre { font-family: var(--font-mono); font-size: 13px; background: var(--paper); 
 
 <section class="wide">
 <h2>그림 2. 신호 배선</h2>
-<div class="legend"><span class="l-vcc">논리 전원 3.3 V</span><span class="l-sig">신호</span><span class="l-gnd">접지</span><span class="l-servo">서보 전원 6 V</span></div>
-<div class="scroll"><svg viewBox="0 0 1200 580" role="img" aria-label="신호 배선도. Jetson 핀 1, 3, 5, 6 이 서보용 보드의 VCC, SDA, SCL, GND 로 간다. 서보용 보드 반대쪽 헤더에서 같은 네 신호가 모터용 보드로 이어진다. 서보용 보드 채널 0 의 세 핀에 서보를 꽂는다. 모터용 보드 채널 0 의 PWM 핀은 J4 로, 채널 1 의 PWM 핀은 J5 로 가고, J4 에서 PWM1 과 PWM2 로, J5 에서 DIR1 과 DIR2 로 나뉜다. 채널 0 의 GND 핀이 MDD10A 제어 헤더 GND 로 간다.">
+<div class="legend"><span class="l-vcc">논리 전원 3.3 V</span><span class="l-plus">5 V (Jetson)</span><span class="l-sig">신호</span><span class="l-gnd">접지</span><span class="l-servo">서보 전원 6 V</span></div>
+<div class="scroll"><svg viewBox="0 0 1200 580" role="img" aria-label="신호 배선도. Jetson 핀 1, 3, 5, 6 이 서보용 보드의 VCC, SDA, SCL, GND 로 간다. 서보용 보드 반대쪽 헤더에서 같은 네 신호가 모터용 보드로 이어진다. 서보용 보드 채널 0 의 세 핀에 서보를 꽂는다. 모터용 보드 채널 0 의 PWM 핀은 J4 로, 채널 1 의 PWM 핀은 J5 로 가고, J4 에서 PWM1 과 PWM2 로, J5 에서 DIR1 과 DIR2 로 나뉜다. 채널 0 의 GND 핀이 MDD10A 제어 헤더 GND 로 간다. Jetson 아래쪽 핀 2, 20, 19, 23, 24 는 상태 표시용 도트 매트릭스의 VCC, GND, DIN, CLK, CS 로 간다.">
 <rect x="40" y="140" width="220" height="220" rx="5" fill="var(--paper)" stroke="var(--ink)" stroke-width="1.6"/>
-<rect x="40" y="450" width="220" height="56" rx="5" fill="var(--paper)" stroke="var(--muted)" stroke-width="1.6"/>
+<rect x="40" y="440" width="220" height="80" rx="5" fill="var(--paper)" stroke="var(--muted)" stroke-width="1.6"/>
+<rect x="290" y="440" width="110" height="56" rx="5" fill="var(--paper)" stroke="var(--muted)" stroke-width="1.6"/>
 <rect x="410" y="140" width="280" height="220" rx="5" fill="var(--paper)" stroke="var(--w-sig)" stroke-width="1.6"/>
 <rect x="470" y="28" width="160" height="44" rx="5" fill="var(--paper)" stroke="var(--ink)" stroke-width="1.6"/>
 <rect x="440" y="450" width="220" height="96" rx="5" fill="var(--paper)" stroke="var(--ink)" stroke-width="1.6"/>
@@ -225,7 +227,7 @@ pre { font-family: var(--font-mono); font-size: 13px; background: var(--paper); 
 <rect x="845" y="405" width="100" height="40" rx="5" fill="var(--paper)" stroke="var(--w-sig)" stroke-width="1.6"/>
 <rect x="955" y="405" width="100" height="40" rx="5" fill="var(--paper)" stroke="var(--w-sig)" stroke-width="1.6"/>
 <rect x="840" y="490" width="300" height="80" rx="5" fill="var(--paper)" stroke="var(--ink)" stroke-width="1.6"/>
-<path d="M150 450 L150 360" stroke="var(--muted)" stroke-width="2" fill="none"/>
+<path d="M260 345 L345 345 L345 440" stroke="var(--muted)" stroke-width="2" fill="none"/>
 <path d="M260 200 L410 200" fill="none" stroke="var(--w-vcc)" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
 <circle cx="260" cy="200" r="3.4" fill="var(--w-vcc)"/>
 <circle cx="410" cy="200" r="3.4" fill="var(--w-vcc)"/>
@@ -286,14 +288,40 @@ pre { font-family: var(--font-mono); font-size: 13px; background: var(--paper); 
 <path d="M1115 360 L1115 490" fill="none" stroke="var(--w-gnd)" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
 <circle cx="1115" cy="360" r="3.4" fill="var(--w-gnd)"/>
 <circle cx="1115" cy="490" r="3.4" fill="var(--w-gnd)"/>
+<path d="M70 360 L70 440" fill="none" stroke="var(--w-plus)" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="70" cy="360" r="3.4" fill="var(--w-plus)"/>
+<circle cx="70" cy="440" r="3.4" fill="var(--w-plus)"/>
+<path d="M110 360 L110 440" fill="none" stroke="var(--w-gnd)" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="110" cy="360" r="3.4" fill="var(--w-gnd)"/>
+<circle cx="110" cy="440" r="3.4" fill="var(--w-gnd)"/>
+<path d="M150 360 L150 440" fill="none" stroke="var(--w-sig)" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="150" cy="360" r="3.4" fill="var(--w-sig)"/>
+<circle cx="150" cy="440" r="3.4" fill="var(--w-sig)"/>
+<path d="M190 360 L190 440" fill="none" stroke="var(--w-sig)" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="190" cy="360" r="3.4" fill="var(--w-sig)"/>
+<circle cx="190" cy="440" r="3.4" fill="var(--w-sig)"/>
+<path d="M230 360 L230 440" fill="none" stroke="var(--w-sig)" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="230" cy="360" r="3.4" fill="var(--w-sig)"/>
+<circle cx="230" cy="440" r="3.4" fill="var(--w-sig)"/>
 <text x="52" y="166" font-size="14" text-anchor="start" fill="var(--ink)" font-family="var(--font-body)" font-weight="700">Jetson Orin Nano</text>
 <text x="250" y="204" font-size="12" text-anchor="end" fill="var(--ink)" font-family="var(--font-mono)">핀 1 · 3.3 V</text>
 <text x="250" y="244" font-size="12" text-anchor="end" fill="var(--ink)" font-family="var(--font-mono)">핀 3 · SDA</text>
 <text x="250" y="284" font-size="12" text-anchor="end" fill="var(--ink)" font-family="var(--font-mono)">핀 5 · SCL</text>
 <text x="250" y="324" font-size="12" text-anchor="end" fill="var(--ink)" font-family="var(--font-mono)">핀 6 · GND</text>
-<text x="52" y="346" font-size="11" text-anchor="start" fill="var(--muted)" font-family="var(--font-body)">다른 헤더 핀은 쓰지 않음</text>
-<text x="150" y="483" font-size="13" text-anchor="middle" fill="var(--ink)" font-family="var(--font-body)">USB 카메라</text>
-<text x="159" y="410" font-size="11" text-anchor="start" fill="var(--muted)" font-family="var(--font-mono)">USB</text>
+<text x="70" y="350" font-size="10" text-anchor="middle" fill="var(--ink)" font-family="var(--font-mono)">핀 2</text>
+<text x="110" y="350" font-size="10" text-anchor="middle" fill="var(--ink)" font-family="var(--font-mono)">핀 20</text>
+<text x="150" y="350" font-size="10" text-anchor="middle" fill="var(--ink)" font-family="var(--font-mono)">핀 19</text>
+<text x="190" y="350" font-size="10" text-anchor="middle" fill="var(--ink)" font-family="var(--font-mono)">핀 23</text>
+<text x="230" y="350" font-size="10" text-anchor="middle" fill="var(--ink)" font-family="var(--font-mono)">핀 24</text>
+<text x="150" y="492" font-size="13" text-anchor="middle" fill="var(--ink)" font-family="var(--font-body)" font-weight="700">도트 매트릭스 MAX7219</text>
+<text x="150" y="510" font-size="10" text-anchor="middle" fill="var(--muted)" font-family="var(--font-body)">상태 표시 (선택). 없어도 주행에는 지장 없음</text>
+<text x="70" y="460" font-size="10" text-anchor="middle" fill="var(--ink)" font-family="var(--font-mono)">VCC</text>
+<text x="110" y="460" font-size="10" text-anchor="middle" fill="var(--ink)" font-family="var(--font-mono)">GND</text>
+<text x="150" y="460" font-size="10" text-anchor="middle" fill="var(--ink)" font-family="var(--font-mono)">DIN</text>
+<text x="190" y="460" font-size="10" text-anchor="middle" fill="var(--ink)" font-family="var(--font-mono)">CLK</text>
+<text x="230" y="460" font-size="10" text-anchor="middle" fill="var(--ink)" font-family="var(--font-mono)">CS</text>
+<text x="345" y="473" font-size="12" text-anchor="middle" fill="var(--ink)" font-family="var(--font-body)">USB 카메라</text>
+<text x="300" y="338" font-size="10" text-anchor="start" fill="var(--muted)" font-family="var(--font-mono)">USB</text>
 <text x="550" y="236" font-size="15" text-anchor="middle" fill="var(--w-sig)" font-family="var(--font-body)" font-weight="700">서보용 PCA9685</text>
 <text x="550" y="256" font-size="12" text-anchor="middle" fill="var(--muted)" font-family="var(--font-body)">주소 0x40 · 50 Hz</text>
 <text x="550" y="286" font-size="11" text-anchor="middle" fill="var(--muted)" font-family="var(--font-body)">6핀 헤더의 OE, V+ 는 비움</text>
@@ -364,8 +392,13 @@ pre { font-family: var(--font-mono); font-size: 13px; background: var(--paper); 
 <text x="967" y="472" font-size="11" text-anchor="end" fill="var(--muted)" font-family="var(--font-mono)">D5</text>
 <text x="1027" y="472" font-size="11" text-anchor="end" fill="var(--muted)" font-family="var(--font-mono)">D6</text>
 <text x="1124" y="430" font-size="11" text-anchor="start" fill="var(--muted)" font-family="var(--font-mono)">D7</text>
+<text x="65" y="405" font-size="11" text-anchor="end" fill="var(--muted)" font-family="var(--font-mono)">X1</text>
+<text x="105" y="405" font-size="11" text-anchor="end" fill="var(--muted)" font-family="var(--font-mono)">X2</text>
+<text x="145" y="405" font-size="11" text-anchor="end" fill="var(--muted)" font-family="var(--font-mono)">X3</text>
+<text x="185" y="405" font-size="11" text-anchor="end" fill="var(--muted)" font-family="var(--font-mono)">X4</text>
+<text x="225" y="405" font-size="11" text-anchor="end" fill="var(--muted)" font-family="var(--font-mono)">X5</text>
 </svg></div>
-<p class="cap">Jetson 의 네 가닥이 서보용 보드를 거쳐 모터용 보드로 이어집니다. 속도는 J4, 방향은 J5 에서 MDD10A 의 두 채널로 나뉘어 두 모터가 항상 같은 신호를 받습니다. MDD10A 핀과 모터용 보드 GND 핀의 실제 위치는 그림 3 에 있습니다.</p>
+<p class="cap">Jetson 의 네 가닥이 서보용 보드를 거쳐 모터용 보드로 이어집니다. 속도는 J4, 방향은 J5 에서 MDD10A 의 두 채널로 나뉘어 두 모터가 항상 같은 신호를 받습니다. MDD10A 핀과 모터용 보드 GND 핀의 실제 위치는 그림 3 에 있습니다. 도트 매트릭스(X1~X5)는 Jetson 전원 영역 안에서만 이어지는 선택 부품입니다.</p>
 </section>
 
 <h2 class="pagebreak">2. 배선 목록</h2>
@@ -407,11 +440,20 @@ pre { font-family: var(--font-mono); font-size: 13px; background: var(--paper); 
 <tr><td class="id">D6</td><td>J5 3번</td><td>MDD10A 제어 헤더 DIR2</td><td>22AWG</td><td>방향 → 2번 채널</td></tr>
 <tr><td class="id">D7</td><td>모터용 보드 채널 0 GND 핀</td><td>MDD10A 제어 헤더 GND</td><td>22AWG</td><td>모터 신호의 기준 접지</td></tr>
 </tbody></table></div>
+<h3>상태 표시 도트 매트릭스 (5가닥, 선택)</h3>
+<div class="tablewrap wires"><table><thead><tr><th>번호</th><th>출발</th><th>도착</th><th>선</th><th>역할</th></tr></thead><tbody>
+<tr><td class="id">X1</td><td>Jetson 핀 2 (5 V)</td><td>도트 매트릭스 VCC</td><td>듀폰</td><td>도트 매트릭스 전원 5 V</td></tr>
+<tr><td class="id">X2</td><td>Jetson 핀 20 (GND)</td><td>도트 매트릭스 GND</td><td>듀폰</td><td>도트 매트릭스 접지</td></tr>
+<tr><td class="id">X3</td><td>Jetson 핀 19 (SPI MOSI)</td><td>도트 매트릭스 DIN</td><td>듀폰</td><td>SPI 데이터</td></tr>
+<tr><td class="id">X4</td><td>Jetson 핀 23 (SPI SCK)</td><td>도트 매트릭스 CLK</td><td>듀폰</td><td>SPI 클럭</td></tr>
+<tr><td class="id">X5</td><td>Jetson 핀 24 (SPI CS0)</td><td>도트 매트릭스 CS</td><td>듀폰</td><td>SPI 선택</td></tr>
+</tbody></table></div>
 <ul>
 <li>I1~I4 와 C1~C4 는 각각 한 묶음의 케이블로 만듭니다. 6핀 헤더의 OE 와 V+ 는 비웁니다.</li>
 <li>S1~S3 는 서보의 3핀 커넥터 그대로입니다. 검정이 보드 가장자리 쪽입니다.</li>
 <li>D1~D7 은 한 다발로 묶어 모터 전력선과 떨어뜨립니다. <strong>WAGO 221 은 24AWG 보다 가는 선을 물지 못하므로</strong> 듀폰 점퍼선(26~28AWG) 대신 22AWG 선을 쓰고, 한쪽은 피복을 벗겨 WAGO 에, 다른 쪽은 듀폰 암 단자를 압착해 보드와 MDD10A 핀에 꽂습니다.</li>
 <li>PCA9685 출력 하나가 MDD10A 입력 둘을 구동해도 입력 전류가 µA 수준이라 문제없습니다.</li>
+<li>X1~X5 는 듀폰 암-암 점퍼선 그대로 꽂습니다. Jetson 핀 2(5 V)와 핀 1(3.3 V)을 헷갈리지 않게 봅니다.</li>
 <li>USB 카메라는 Jetson 의 USB 포트에 꽂습니다. 표에는 넣지 않았습니다.</li>
 </ul>
 
@@ -427,7 +469,7 @@ pre { font-family: var(--font-mono); font-size: 13px; background: var(--paper); 
 <tr><td class="id">D7</td><td>모터용 보드 채널 0 GND 핀</td><td>MDD10A 제어 헤더 GND</td><td>22AWG</td><td>모터 신호의 기준 접지</td></tr>
 </tbody></table></div>
 <ul>
-<li><strong>Jetson 의 접지선은 I4 하나뿐입니다.</strong> 그래서 모터나 서보 전류가 Jetson 을 지나갈 길이 없습니다. Jetson 은 플라스틱 기둥으로 고정합니다. 금속 기둥은 접지선을 하나 더 만듭니다.</li>
+<li><strong>차체로 가는 Jetson 의 접지선은 I4 하나뿐입니다.</strong> (X2 는 Jetson 과 도트 매트릭스 사이의 선이라 차체와 무관합니다.) 그래서 모터나 서보 전류가 Jetson 을 지나갈 길이 없습니다. Jetson 은 플라스틱 기둥으로 고정합니다. 금속 기둥은 접지선을 하나 더 만듭니다.</li>
 <li><strong>모터 신호의 기준 접지는 D7 입니다.</strong> 신호선과 같은 다발로 다녀야 모터 전류의 영향이 신호에 실리지 않습니다.</li>
 <li><strong>굵은 접지선 G2, G3, G4 는 확실히 조입니다.</strong> 하나가 빠져도 전류가 가는 접지선(D7, C4)으로 돌아 흘러 겉으로는 동작하지만, 가는 선이 뜨거워지고 퓨즈는 이를 막지 못합니다.</li>
 </ul>
@@ -766,7 +808,8 @@ pre { font-family: var(--font-mono); font-size: 13px; background: var(--paper); 
 <tr><td class="id">1</td><td><code>uv run python scripts/pin_test.py scan</code></td><td>0x40 서보용 보드, 0x41 모터용 보드가 모두 "응답"</td><td>둘 다 없으면 Jetson 케이블(I1~I4), 0x41 만 없으면 보드 사이 케이블(C1~C4)과 A0 납땜(그림 4)</td></tr>
 <tr><td class="id">2</td><td><code>uv run python scripts/pin_test.py servo</code></td><td>서보가 60° → 120° → 90° 로 움직인다</td><td>안 움직이면 UBEC 출력(P5, G4)과 서보 커넥터(S1~S3) 방향. 5절 참조</td></tr>
 <tr><td class="id">3</td><td><code>uv run python scripts/pin_test.py motor</code></td><td>두 바퀴가 같은 방향으로 10초 돌고, 멈춘 뒤 반대 방향으로 10초 돈다</td><td>한 방향만 돌거나 정지 명령에 빨라지면 속도·방향 선이 바뀐 것(D1 과 D4). 한쪽만 안 돌면 그쪽 모터 전력선과 J4·J5 레버. 두 바퀴가 서로 반대로 돌면 한쪽 모터의 전력선 두 가닥을 맞바꾼다</td></tr>
-<tr><td class="id">4</td><td><code>uv run python -m collector --check</code></td><td>"점검 완료" 와 함께 서보가 중앙으로 한 번 움직인다</td><td>실패한 점검 이름(i2c_bus, pca9685:서보, pca9685:모터 …)과 메시지를 따라 고친다</td></tr>
+<tr><td class="id">4</td><td><code>uv run python scripts/dotmatrix_test.py status</code> (도트 매트릭스를 달았을 때)</td><td>정지 ■ → 전진 ▲ 와 속도 막대 → 후진 ▼ → 조향 점 좌우 → 녹화 모서리 점멸 → X 점멸</td><td>아무것도 안 켜지면 <code>bash scripts/jetson_setup.sh verify</code> 의 SPI 항목과 X1~X5. 화살표가 돌아가 있으면 <code>display.rotate</code></td></tr>
+<tr><td class="id">5</td><td><code>uv run python -m collector --check</code></td><td>"점검 완료" 와 함께 서보가 중앙으로 한 번 움직인다</td><td>실패한 점검 이름(i2c_bus, pca9685:서보, pca9685:모터 …)과 메시지를 따라 고친다</td></tr>
 </tbody></table></div>
 <p>3번에서 전진 명령에 차가 뒤로 가면 선은 그대로 두고 <code>config.yaml</code> 의 <code>hardware.dir_forward_high</code> 를 <code>false</code> 로 바꿉니다.</p>
 

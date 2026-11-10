@@ -7,7 +7,8 @@
 #   bash scripts/jetson_setup.sh pair      # DualShock 4 블루투스 페어링 (패드를 페어링 모드로 두고 실행)
 #
 # 서보·모터 신호는 I2C(핀 3 SDA, 5 SCL = i2c-7)에 연결한 PCA9685 두 장(0x40 서보, 0x41 모터)이 낸다.
-# 40핀 헤더의 PWM 핀먹스·GPIO 설정은 필요 없다 (배선: docs/wiring.pdf).
+# 40핀 헤더의 PWM 핀먹스·GPIO 설정은 필요 없다 (배선: docs/wiring.pdf). 헤더에서 jetson-io 로 켜는 것은
+# 상태 표시용 도트 매트릭스(MAX7219)가 쓰는 SPI1(핀 19/21/23/24/26) 하나뿐이다.
 # 일반 사용자로 실행한다. 필요한 곳에서만 sudo 를 부른다 (비밀번호를 한 번 묻는다).
 # =============================================================================
 set -euo pipefail
@@ -16,8 +17,15 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 I2C_BUS=7                    # Jetson 핀 3/5 (config.yaml hardware.pca9685.bus 와 같아야 함)
 ADDR_SERVO=40                # 서보용 PCA9685 (config.yaml hardware.pca9685.address)
 ADDR_MOTOR=41                # 모터용 PCA9685, A0 납땜 (config.yaml hardware.pca9685_motor.address)
+SPI_DEV=/dev/spidev0.0       # 도트 매트릭스 (config.yaml display.spi_dev). SPI1 CS0 = 헤더 핀 19/23/24
+JIO=/opt/nvidia/jetson-io
 SYS_PY=/usr/bin/python3      # JetPack 시스템 파이썬 (tensorrt 가 여기에 있다)
 NEED_RELOGIN=0
+NEED_REBOOT=0
+
+spi1_enabled() {   # 부팅된 디바이스 트리에 jetson-io 의 SPI1 핀 설정이 들어 있는지
+    [[ -d /proc/device-tree/bus@0/pinmux@2430000/exp-header-pinmux/hdr40-pin19 ]]
+}
 
 ok()   { printf '  \033[32m[OK]\033[0m   %s\n' "$*"; }
 warn() { printf '  \033[33m[경고]\033[0m %s\n' "$*"; }
@@ -41,16 +49,17 @@ i2c_has() {   # $1=주소(16진 두 자리, 예: 40) → i2cdetect 표에 그 �
 
 # -----------------------------------------------------------------------------
 cmd_install() {
-    step "1/4 플랫폼 확인"; require_jetson
+    step "1/5 플랫폼 확인"; require_jetson
 
-    step "2/4 시스템 패키지"
+    step "2/5 시스템 패키지"
     sudo apt-get update -qq
     sudo apt-get install -y -qq git curl python3-dev build-essential bluez v4l-utils i2c-tools >/dev/null
     ok "git curl python3-dev build-essential bluez v4l-utils i2c-tools"
 
-    step "3/4 그룹과 udev 규칙"
+    step "3/5 그룹과 udev 규칙"
+    sudo groupadd -f gpio                      # /dev/spidev* 가 root:gpio 다
     local me; me=$(id -un)
-    for g in i2c input bluetooth video; do
+    for g in i2c input bluetooth video gpio; do
         if id -nG "$me" | tr ' ' '\n' | grep -qx "$g"; then ok "$me ∈ $g"
         else sudo usermod -aG "$g" "$me"; warn "$me 를 $g 그룹에 추가했습니다 (재로그인 후 적용)"; NEED_RELOGIN=1; fi
     done
@@ -78,7 +87,7 @@ EOF
         ok "bluetooth input.conf: ClassicBondedOnly=false"
     fi
 
-    step "4/4 uv + 가상환경 + 의존성"
+    step "4/5 uv + 가상환경 + 의존성"
     if ! command -v uv >/dev/null 2>&1 && [[ ! -x "$HOME/.local/bin/uv" ]]; then
         curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null
         ok "uv 설치"
@@ -96,8 +105,21 @@ EOF
     ok "uv sync (evdev 포함)"
     sudo udevadm control --reload-rules && sudo udevadm trigger || true
 
+    step "5/5 도트 매트릭스용 SPI1 (헤더 핀 19/21/23/24/26)"
+    if spi1_enabled; then
+        ok "SPI1 이 이미 켜져 있음 ($SPI_DEV)"
+    elif [[ ! -x "$JIO/config-by-function.py" ]]; then
+        warn "jetson-io 도구가 없어 SPI 를 켜지 못했습니다. 도트 매트릭스를 쓰지 않으면 config.yaml display.enabled: false"
+    elif sudo "$JIO/config-by-function.py" -o dt spi1 >/dev/null 2>&1; then
+        ok "jetson-io: spi1 추가 → 재부팅 필요"; NEED_REBOOT=1
+    else
+        warn "jetson-io 로 spi1 을 켜지 못했습니다 (sudo $JIO/jetson-io.py 에서 수동으로). 도트 매트릭스 없이도 주행은 된다"
+    fi
+
     step "완료"
-    if [[ $NEED_RELOGIN == 1 ]]; then
+    if [[ $NEED_REBOOT == 1 ]]; then
+        echo "  SPI 설정이 바뀌어 재부팅이 필요합니다:  sudo reboot   → 다시 접속해서  bash scripts/jetson_setup.sh verify"
+    elif [[ $NEED_RELOGIN == 1 ]]; then
         echo "  그룹이 바뀌었습니다. 로그아웃 후 다시 접속해서  bash scripts/jetson_setup.sh verify"
     else
         echo "  바로 사용 가능합니다. 확인:  bash scripts/jetson_setup.sh verify"
@@ -129,9 +151,15 @@ cmd_verify() {
         i2c_has 70 && echo "  (0x70 은 모든 PCA9685 가 함께 듣는 주소라 보이는 것이 정상)"
     fi
 
+    step "SPI: 도트 매트릭스 ($SPI_DEV)"
+    if spi1_enabled; then ok "SPI1 핀 설정이 부팅에 적용됨"; else warn "SPI1 이 꺼져 있음 → install 후 재부팅 (도트 매트릭스를 안 쓰면 무시)"; fi
+    if [[ -e $SPI_DEV ]]; then
+        if [[ -r $SPI_DEV && -w $SPI_DEV ]]; then ok "$SPI_DEV 접근 가능"; else warn "$SPI_DEV 권한 없음 (gpio 그룹, 재로그인)"; fi
+    else warn "$SPI_DEV 없음"; fi
+
     step "권한"
     local me; me=$(id -un)
-    for g in i2c input; do
+    for g in i2c input gpio; do
         if id -nG "$me" | tr ' ' '\n' | grep -qx "$g"; then ok "$me ∈ $g"; else fail "$me ∉ $g (install 후 재로그인했는지 확인)"; bad=1; fi
     done
 

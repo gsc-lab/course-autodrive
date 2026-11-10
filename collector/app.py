@@ -10,6 +10,7 @@ from typing import List, Optional
 
 from common.camera import BaseCamera, create_camera
 from common.config import Config, config_snapshot
+from common.display import Display, DisplayState, create_display
 from common.hw import Vehicle, create_vehicle
 from common.hw.checks import CheckResult, check_disk, check_i2c_bus, check_input_group, check_module, check_pca9685
 from common.inputs import InputDevice, create_input
@@ -87,16 +88,20 @@ class Collector:
 
         self.camera: Optional[BaseCamera] = None
         self.vehicle: Optional[Vehicle] = None
+        self.display: Optional[Display] = None
         self.session: Optional[SessionWriter] = None
         self.input: Optional[InputDevice] = None
         steering = SteeringModel(cfg.steering)
+        self._steering_range = (steering.min, steering.max)
         try:
             # 터미널 모드를 바꾸는 입력 장치는 마지막에 연다 — 앞 단계가 실패해도 터미널이 망가지지 않게
             self.camera = create_camera(cfg.camera, mock=mock)
             self.vehicle = create_vehicle(cfg.hardware, steering.center, (steering.min, steering.max))
+            self.display = create_display(cfg.display, mock=mock)     # 못 열면 NullDisplay (주행은 계속)
             self.input = create_input(cfg.input, override)
             self.logic = DriveLogic(cfg, requires_deadman=self.input.requires_deadman)
-            log.info("카메라 %s | 차량 %s | 입력 %s", self.camera.props(), cfg.hardware.backend, self.input.name)
+            log.info("카메라 %s | 차량 %s | 표시 %s | 입력 %s", self.camera.props(), cfg.hardware.backend,
+                     self.display.name, self.input.name)
             if check_only:
                 return
             self.session = SessionWriter(
@@ -182,7 +187,19 @@ class Collector:
         if now - self._status_last >= 1.0 / STATUS_HZ:
             self._status_last = now
             self.input.set_status(STATUS_ERROR if st.error else (STATUS_RECORDING if st.recording else STATUS_IDLE))
+            self._update_display(now)
             self._print_status()
+
+    def _update_display(self, now: float) -> None:
+        logic, st = self.logic, self.logic.state
+        try:
+            self.display.update(DisplayState(speed=logic.effective_speed, direction=logic.effective_direction,
+                                             angle=st.angle, angle_min=self._steering_range[0],
+                                             angle_max=self._steering_range[1], recording=st.recording,
+                                             error=bool(st.error)), now)
+        except OSError as e:                    # 표시 장치 통신 오류는 주행을 막지 않는다
+            log.warning("상태 표시 오류, 표시를 끕니다: %s", e)
+            self.display = __import__("common.display", fromlist=["NullDisplay"]).NullDisplay()
 
     def _apply_vehicle(self) -> None:
         logic, st = self.logic, self.logic.state
@@ -231,6 +248,8 @@ class Collector:
                       self.vehicle.close]
         if self.camera is not None:
             steps.append(self.camera.close)
+        if self.display is not None:
+            steps.append(self.display.close)
         if self.input is not None:
             steps.append(self.input.close)
         if self.session is not None:
