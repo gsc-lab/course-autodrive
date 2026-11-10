@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import signal
 import sys
 import time
@@ -125,12 +126,21 @@ class Collector:
         def handler(signum, frame):
             log.warning("시그널 %s 수신 → 정지 후 종료", signum)
             self.logic.state.quit = True
-        for name in ("SIGTERM", "SIGINT", "SIGHUP"):
+        for name in ("SIGTERM", "SIGINT"):
             if hasattr(signal, name):
                 try:
                     signal.signal(getattr(signal, name), handler)
                 except (ValueError, OSError):
                     pass
+        # SIGHUP (SSH 가 닫힘): 패드로 조종할 때는 무시하고 계속 달린다 (2026-11-10 결정). 조종 신호는 블루투스로
+        # Jetson 에 직접 들어오고 상태는 도트 매트릭스로 보므로 터미널이 없어도 된다. 종료는 Options 버튼 또는 kill PID.
+        # 키보드 모드는 입력 자체가 SSH 로 오므로 닫히면 정지한다.
+        if hasattr(signal, "SIGHUP"):
+            try:
+                signal.signal(signal.SIGHUP, handler if self.input.name == "keyboard" else signal.SIG_IGN)
+            except (ValueError, OSError):
+                pass
+        self.survives_hangup = self.input.name != "keyboard"
 
     # ------------------------------------------------------------------ 루프
     def run(self) -> int:
@@ -220,6 +230,7 @@ class Collector:
         if self.input.name == "ds4":
             dm = "L1 을 계속 누른 채 R2 (손 떼면 정지)" if self.input.requires_deadman else "R2 전진 (데드맨 꺼짐)"
             msg = f"DS4: 왼쪽 스틱 조향 | {dm} | L2 후진 | ○ 녹화 | □ 불량 표시 | △ 중앙 | Options 종료"
+            msg += f"\r\nSSH 가 끊겨도 계속 달립니다. 종료는 Options 버튼, 또는 다른 터미널에서  kill {os.getpid()}"
         else:
             msg = "키보드: ↑ 전진 ↓ 후진 | Space/T 정지 | ←→ 조향 S 중앙 | A/Z 속도 | R 녹화 | M 불량 표시 | [ ] 간격 | Q/ESC 종료"
         _safe_write(msg + "\r\n")

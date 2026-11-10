@@ -35,21 +35,31 @@ def main(argv=None) -> int:
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s", handlers=handlers)
 
     from collector.app import Collector, PreflightError
+    from collector.lock import AlreadyRunning, InstanceLock
+    lock = InstanceLock(log_dir / "collector.lock")
     try:
-        app = Collector(cfg, mock=args.mock, input_override=args.input, skip_checks=args.skip_checks,
-                        check_only=args.check)
-    except PreflightError as e:
+        lock.acquire()
+    except AlreadyRunning as e:
         print(f"[시작 불가] {e}", file=sys.stderr)
-        return 3
-    except Exception as e:
-        logging.getLogger("collector").exception("초기화 실패")
-        print(f"[초기화 실패] {e}", file=sys.stderr)
-        return 4
-    if args.check:
-        app.close()
-        print("[점검 완료] 카메라·차량·입력 장치 초기화 성공. 세션 폴더는 만들지 않았습니다.")
-        return 0
-    return app.run()
+        return 5
+    try:
+        try:
+            app = Collector(cfg, mock=args.mock, input_override=args.input, skip_checks=args.skip_checks,
+                            check_only=args.check)
+        except PreflightError as e:
+            print(f"[시작 불가] {e}", file=sys.stderr)
+            return 3
+        except Exception as e:
+            logging.getLogger("collector").exception("초기화 실패")
+            print(f"[초기화 실패] {e}", file=sys.stderr)
+            return 4
+        if args.check:
+            app.close()
+            print("[점검 완료] 카메라·차량·입력 장치 초기화 성공. 세션 폴더는 만들지 않았습니다.")
+            return 0
+        return app.run()
+    finally:
+        lock.release()
 
 
 if __name__ == "__main__":

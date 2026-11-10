@@ -192,7 +192,10 @@ without side effects at import time (no device opens, no terminal mode changes a
   record, M mark, Q/ESC quit). **The L1 dead-man was dropped on 2026-11-09** (user decision after the first real drive):
   `input.ds4.deadman` defaults to `false`; setting it to `true` restores "drive only while L1 is held". The no-input
   timer (`safety.deadman_sec`) applies to keyboard toggle driving only, never while a trigger is held.
-- Safety: stop + center on SIGHUP/SIGTERM and on evdev device loss; `deadman_sec` auto-stop; startup
+- Safety: stop + center on SIGTERM/SIGINT and on evdev device loss; `deadman_sec` auto-stop; startup
+  checks. **SIGHUP is ignored when driving with the pad** (user decision 2026-11-10: SSH closing must not stop the car;
+  the pad is the controller and the dot matrix shows status; the keyboard mode still stops on SIGHUP). A flock in
+  `dataset/collector.lock` (`collector/lock.py`) refuses a second collector and prints the `kill <PID>` command. Startup
   checks for the I2C bus and both PCA9685 boards, camera, disk space.
 
 ## Curator behaviour (B2, confirmed 2026-11-04)
