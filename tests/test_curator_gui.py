@@ -10,7 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from common.config import DEFAULT_CONFIG_PATH, load_config  # noqa: E402
-from curator.app import MainWindow, arrow_rotation_deg  # noqa: E402
+from curator.app import MainWindow, arrow_rotation_deg, runs  # noqa: E402
 from curator.core import build_dataset  # noqa: E402
 from tests.test_curator_core import make_session  # noqa: E402
 
@@ -24,6 +24,11 @@ def test_arrow_rotation_sign_and_limits():
     assert arrow_rotation_deg(1.0, 60, False) == 60 and arrow_rotation_deg(-1.0, 60, False) == -60
     assert arrow_rotation_deg(0.0, 60, False) == 0 and arrow_rotation_deg(2.0, 60, False) == 60
     assert arrow_rotation_deg(0.5, 60, True) == -30
+
+
+def test_runs_groups_consecutive_flags():
+    assert runs([True, False, True, True, False, True]) == [(0, 0), (2, 3), (5, 5)]
+    assert runs([]) == [] and runs([False]) == []
 
 
 def test_window_opens_navigates_excludes_and_builds(qapp, tmp_path):
@@ -46,7 +51,10 @@ def test_window_opens_navigates_excludes_and_builds(qapp, tmp_path):
         assert sum(win.ws.counts()[1].values()) == 2
         win.goto(0); win.toggle_current(); assert win.ws.is_excluded(win.frames[0])
         assert (d / "curation.json").exists()                               # 바뀔 때마다 저장
-        assert win.counts.rowCount() == 6 and win.counts.item(5, 1).text() == "9"   # 합계 행: 포함 9장
+        assert [a for a, _, _ in win.chart.data] == [30, 60, 90, 120, 150]
+        assert sum(i for _, i, _ in win.chart.data) == 9 and sum(e for _, _, e in win.chart.data) == 3
+        assert win.timeline.n == 12 and win.timeline.excluded == [(0, 0), (2, 3)]      # 타임라인의 제외 구간
+        assert win.windowTitle().startswith("영진전문대 글로벌시스템융합과")
         path = build_dataset(win.ws, tmp_path / "out")
         with zipfile.ZipFile(path) as z:
             assert len([n for n in z.namelist() if n.startswith("images/")]) == 9

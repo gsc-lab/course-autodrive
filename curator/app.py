@@ -1,37 +1,107 @@
-"""가공 도구 화면 (PySide6). 로직은 curator/core.py 에 있고 여기서는 보여 주고 키를 받는다.
+"""가공 도구 화면 (PySide6). 로직은 curator/core.py 에 있고 여기서는 보여 주고 조작을 받는다.
 
   uv run -m curator [세션 폴더 또는 zip ...]
 
-키: ←/→ 한 장, PageUp/PageDown 10장, Home/End 처음/끝, Space 자동 재생, [ ] 구간 시작/끝, Delete 구간(없으면 현재) 제외,
-    Insert 구간(없으면 현재) 복구, X 현재 프레임 제외/복구, Ctrl+Z 되돌리기, Ctrl+S 저장, Ctrl+O 폴더 열기, Esc 구간 해제.
-제외 상태는 바뀔 때마다 세션 옆 curation.json 에 저장된다. 원본 사진은 건드리지 않는다.
+화면: 머리띠(로고·제목) → 도구 막대 → [사진 + 조향 화살표 | 옆 패널(세션, 구간 선택, 클래스 분포, 현재 프레임)]
+      → 타임라인(세션 경계·제외·구간·현재 위치를 한 줄에) → 필름스트립.
+용어: 세션 = 수집기를 한 번 실행해 생긴 폴더(파일로 남는다). 구간 = 한꺼번에 제외/복구하려고 [ ] 로 잡는 임시 선택(저장 안 됨).
+제외 상태는 바뀔 때마다 세션 옆 curation.json 에 저장된다. 원본 사진은 건드리지 않는다. 단축키는 F1.
 """
 from __future__ import annotations
 
 import logging
-import math
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
-from PySide6.QtCore import QObject, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QObject, QPointF, QRectF, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (QAction, QBrush, QColor, QFont, QIcon, QImage, QKeySequence, QPainter, QPen, QPixmap,
                            QPolygonF)
-from PySide6.QtCore import QPointF
-from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMainWindow,
-                               QMessageBox, QProgressDialog, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout,
-                               QWidget)
+from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
+                               QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QProgressDialog, QPushButton,
+                               QScrollArea, QSizePolicy, QVBoxLayout, QWidget)
 
 from common.config import Config
 from curator.core import REASON_MARK, Frame, SessionSource, Workspace, build_dataset
 
 log = logging.getLogger("curator")
 
+APP_TITLE = "영진전문대 글로벌시스템융합과-자율주행 RC카 데이터 가공 프로그램"
+LOGO_PATH = Path(__file__).parent / "assets" / "yju-symbol-white.png"
+
+# 색 (어두운 테마)
+C_BG, C_PANEL, C_CARD, C_BORDER = "#16191f", "#1d2129", "#252a34", "#363c49"
+C_TEXT, C_MUTED, C_ACCENT, C_DANGER, C_OK, C_AMBER = "#e6e8ec", "#95a0b3", "#3b82f6", "#ef4444", "#22c55e", "#ffc400"
+C_HEADER = "#0f2747"
+SESSION_COLORS = ["#3b82f6", "#14b8a6", "#a855f7", "#f59e0b", "#ec4899", "#84cc16"]
+
+QSS = f"""
+QMainWindow, QWidget {{ background: {C_BG}; color: {C_TEXT}; font-family: "Malgun Gothic", "Segoe UI", sans-serif; font-size: 13px; }}
+#header {{ background: {C_HEADER}; }}
+#header QLabel {{ background: transparent; }}
+#org {{ color: #b8c7e0; font-size: 12px; }}
+#title {{ color: white; font-size: 17px; font-weight: 700; }}
+#toolbar {{ background: {C_PANEL}; border-bottom: 1px solid {C_BORDER}; }}
+#toolbar QLabel {{ background: transparent; color: {C_MUTED}; font-size: 11px; }}
+QPushButton {{ background: {C_CARD}; border: 1px solid {C_BORDER}; border-radius: 6px; padding: 6px 12px; color: {C_TEXT}; }}
+QPushButton:hover {{ background: #303746; border-color: #4a5263; }}
+QPushButton:pressed {{ background: #1f242d; }}
+QPushButton:disabled {{ color: #5d6575; }}
+QPushButton#primary {{ background: {C_ACCENT}; border-color: {C_ACCENT}; color: white; font-weight: 700; }}
+QPushButton#primary:hover {{ background: #5a97f8; }}
+QPushButton#danger {{ color: #ff8f8f; }}
+QPushButton#ghost {{ background: transparent; border-color: #5f7396; color: #dbe6f7; }}
+#side {{ background: {C_PANEL}; border-left: 1px solid {C_BORDER}; }}
+QFrame#card {{ background: {C_CARD}; border: 1px solid {C_BORDER}; border-radius: 8px; }}
+QFrame#card QLabel, QFrame#card QWidget {{ background: transparent; }}
+QLabel#cardTitle {{ font-weight: 700; font-size: 13px; }}
+QLabel#hint {{ color: {C_MUTED}; font-size: 11px; }}
+QLabel#value {{ font-size: 13px; }}
+QListWidget {{ background: transparent; border: none; outline: none; }}
+QListWidget#sessions::item {{ padding: 6px 4px; border-radius: 6px; }}
+QListWidget#sessions::item:selected {{ background: #313a4d; color: {C_TEXT}; }}
+QListWidget#strip {{ background: {C_PANEL}; border-top: 1px solid {C_BORDER}; }}
+QListWidget#strip::item {{ color: {C_MUTED}; border: 2px solid transparent; border-radius: 4px; }}
+QListWidget#strip::item:selected {{ border: 2px solid {C_AMBER}; color: {C_TEXT}; background: #2b3140; }}
+QScrollArea {{ border: none; }}
+QScrollBar:horizontal {{ height: 10px; background: {C_PANEL}; }}
+QScrollBar::handle:horizontal {{ background: #4a5263; border-radius: 4px; min-width: 30px; }}
+QScrollBar:vertical {{ width: 10px; background: {C_PANEL}; }}
+QScrollBar::handle:vertical {{ background: #4a5263; border-radius: 4px; min-height: 30px; }}
+QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
+QStatusBar {{ background: {C_PANEL}; color: {C_MUTED}; border-top: 1px solid {C_BORDER}; }}
+QDialog {{ background: {C_PANEL}; }}
+QToolTip {{ background: #0b0d11; color: {C_TEXT}; border: 1px solid {C_BORDER}; padding: 4px; }}
+"""
+
+SHORTCUTS = [
+    ("이동", [("←  /  →", "한 장 앞뒤"), ("PageUp / PageDown", "10장 앞뒤"), ("Home / End", "처음 / 끝"),
+            ("Space", "자동 재생 · 정지"), ("타임라인 클릭·끌기", "그 위치로 이동")]),
+    ("구간 선택", [("[", "구간 시작점"), ("]", "구간 끝점"), ("Esc", "구간 해제")]),
+    ("제외 · 복구", [("Delete", "구간(없으면 현재 장) 제외"), ("Insert", "구간(없으면 현재 장) 복구"),
+                 ("X", "현재 장 제외/복구 토글"), ("Ctrl+Z", "되돌리기")]),
+    ("파일", [("Ctrl+O", "세션 폴더 열기"), ("Ctrl+Shift+O", "세션 zip 열기"), ("Ctrl+S", "지금 저장 (평소엔 자동 저장)"),
+            ("Ctrl+B", "데이터셋 zip 만들기"), ("F1", "이 도움말")]),
+]
+
 
 def arrow_rotation_deg(side: float, max_deg: float, invert: bool) -> float:
     """조향 쪽(-1 왼쪽 … +1 오른쪽)을 화살표 기울기(시계 방향 양수)로. 화면 표시용 반전은 따로 적용한다."""
     deg = max(-1.0, min(1.0, side)) * max_deg
     return -deg if invert else deg
+
+
+def runs(flags: List[bool]) -> List[Tuple[int, int]]:
+    """True 가 이어진 구간들을 (시작, 끝 포함) 목록으로."""
+    out, start = [], None
+    for i, f in enumerate(flags):
+        if f and start is None:
+            start = i
+        elif not f and start is not None:
+            out.append((start, i - 1)); start = None
+    if start is not None:
+        out.append((start, len(flags) - 1))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -44,7 +114,8 @@ class FrameView(QWidget):
         self.rotation = 0.0
         self.caption = ""
         self.excluded_reason: Optional[str] = None
-        self.setMinimumSize(320, 240)
+        self.setMinimumSize(360, 270)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     def set_frame(self, pixmap: Optional[QPixmap], rotation: float, caption: str, excluded_reason: Optional[str]) -> None:
         self.pixmap, self.rotation, self.caption, self.excluded_reason = pixmap, rotation, caption, excluded_reason
@@ -52,40 +123,173 @@ class FrameView(QWidget):
 
     def paintEvent(self, event) -> None:  # noqa: N802 (Qt 이름)
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor(24, 26, 30))
+        p.fillRect(self.rect(), QColor("#0d0f13"))
         if self.pixmap is None:
-            p.setPen(QColor(160, 160, 160))
-            p.drawText(self.rect(), Qt.AlignCenter, "세션 폴더를 여세요 (Ctrl+O)")
+            p.setPen(QColor(C_MUTED))
+            f = QFont(); f.setPointSize(12); p.setFont(f)
+            p.drawText(self.rect(), Qt.AlignCenter, "세션 폴더를 여세요  (Ctrl+O)")
             return
         scaled = self.pixmap.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
         x = (self.width() - scaled.width()) // 2
         y = (self.height() - scaled.height()) // 2
         p.drawPixmap(x, y, scaled)
-        # 화살표: 사진 아래 가운데에서 위로, 조향만큼 기울임
         p.setRenderHint(QPainter.Antialiasing)
         length = scaled.height() * 0.35
         p.save()
-        p.translate(x + scaled.width() / 2, y + scaled.height() - 10)
+        p.translate(x + scaled.width() / 2, y + scaled.height() - 12)
         p.rotate(self.rotation)
-        pen = QPen(QColor(255, 196, 0), 6, Qt.SolidLine, Qt.RoundCap)
-        p.setPen(pen)
+        p.setPen(QPen(QColor(0, 0, 0, 150), 10, Qt.SolidLine, Qt.RoundCap))
         p.drawLine(QPointF(0, 0), QPointF(0, -length))
-        head = QPolygonF([QPointF(0, -length - 14), QPointF(-14, -length + 8), QPointF(14, -length + 8)])
-        p.setBrush(QBrush(QColor(255, 196, 0)))
-        p.setPen(Qt.NoPen)
-        p.drawPolygon(head)
+        p.setPen(QPen(QColor(C_AMBER), 6, Qt.SolidLine, Qt.RoundCap))
+        p.drawLine(QPointF(0, 0), QPointF(0, -length))
+        p.setBrush(QBrush(QColor(C_AMBER))); p.setPen(Qt.NoPen)
+        p.drawPolygon(QPolygonF([QPointF(0, -length - 16), QPointF(-15, -length + 8), QPointF(15, -length + 8)]))
         p.restore()
-        # 설명 글자
-        p.setPen(QColor(255, 255, 255))
         f = QFont(); f.setPointSize(11); f.setBold(True); p.setFont(f)
-        p.fillRect(x, y, scaled.width(), 26, QColor(0, 0, 0, 140))
-        p.drawText(x + 8, y + 19, self.caption)
+        p.fillRect(x, y, scaled.width(), 30, QColor(0, 0, 0, 150))
+        p.setPen(QColor("white"))
+        p.drawText(QRectF(x + 10, y, scaled.width() - 20, 30), Qt.AlignVCenter | Qt.AlignLeft, self.caption)
         if self.excluded_reason:
-            p.fillRect(x, y, scaled.width(), scaled.height(), QColor(180, 0, 0, 70))
-            f.setPointSize(20); p.setFont(f)
-            p.setPen(QColor(255, 80, 80))
+            p.fillRect(x, y + 30, scaled.width(), scaled.height() - 30, QColor(200, 30, 30, 70))
             why = "불량 표시 구간 (□)" if self.excluded_reason == REASON_MARK else "제외됨"
-            p.drawText(QPointF(x + 12, y + scaled.height() - 16), f"✕ {why}")
+            f.setPointSize(13); p.setFont(f)
+            w = p.fontMetrics().horizontalAdvance("✕  " + why) + 24
+            badge = QRectF(x + scaled.width() - w - 10, y + 40, w, 30)
+            p.setBrush(QColor(C_DANGER)); p.setPen(Qt.NoPen); p.drawRoundedRect(badge, 6, 6)
+            p.setPen(QColor("white")); p.drawText(badge, Qt.AlignCenter, "✕  " + why)
+
+
+# ---------------------------------------------------------------------------
+# 클래스 분포: 세로 막대 (포함 = 파랑, 제외 = 빨강을 위에 쌓음)
+# ---------------------------------------------------------------------------
+class BarChart(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.data: List[Tuple[int, int, int]] = []     # (각도, 포함, 제외)
+        self.current: Optional[int] = None             # 현재 프레임의 클래스
+        self.setMinimumHeight(190)
+
+    def set_data(self, data: List[Tuple[int, int, int]], current: Optional[int]) -> None:
+        self.data, self.current = data, current
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        if not self.data:
+            return
+        w, h = self.width(), self.height()
+        top, bottom, left, right = 22, 40, 6, 6
+        plot_h = h - top - bottom
+        n = len(self.data)
+        slot = (w - left - right) / n
+        bar_w = min(46.0, slot * 0.62)
+        peak = max(1, max(i + e for _, i, e in self.data))
+        total = sum(i for _, i, _ in self.data)
+        p.setPen(QPen(QColor(C_BORDER), 1, Qt.DotLine))
+        for k in (0.5, 1.0):
+            yy = top + plot_h * (1 - k)
+            p.drawLine(QPointF(left, yy), QPointF(w - right, yy))
+        p.setPen(QPen(QColor("#5d6575"), 1))
+        p.drawLine(QPointF(left, top + plot_h), QPointF(w - right, top + plot_h))
+        small = QFont(); small.setPointSize(8)
+        bold = QFont(); bold.setPointSize(9); bold.setBold(True)
+        for k, (angle, inc, exc) in enumerate(self.data):
+            cx = left + slot * (k + 0.5)
+            x0 = cx - bar_w / 2
+            hi = plot_h * inc / peak
+            he = plot_h * exc / peak
+            is_cur = angle == self.current
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor("#6aa5ff" if is_cur else C_ACCENT))
+            if inc:
+                p.drawRoundedRect(QRectF(x0, top + plot_h - hi, bar_w, hi), 3, 3)
+            if exc:
+                p.setBrush(QColor(C_DANGER))
+                p.drawRoundedRect(QRectF(x0, top + plot_h - hi - he, bar_w, max(2.0, he)), 3, 3)
+            p.setFont(bold); p.setPen(QColor(C_TEXT))
+            p.drawText(QRectF(cx - slot / 2, top + plot_h - hi - he - 18, slot, 16), Qt.AlignCenter, str(inc))
+            p.setPen(QColor(C_AMBER if is_cur else C_TEXT))
+            p.drawText(QRectF(cx - slot / 2, top + plot_h + 4, slot, 16), Qt.AlignCenter, f"{angle}°")
+            p.setFont(small); p.setPen(QColor(C_MUTED))
+            share = inc / total * 100 if total else 0.0
+            p.drawText(QRectF(cx - slot / 2, top + plot_h + 20, slot, 14), Qt.AlignCenter, f"{share:.1f}%")
+
+
+# ---------------------------------------------------------------------------
+# 타임라인: 전체 프레임을 한 줄로. 세션 경계, 제외(빨강), 구간(파랑), 현재 위치(노랑)
+# ---------------------------------------------------------------------------
+class Timeline(QWidget):
+    seek = Signal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.n = 0
+        self.sessions: List[Tuple[str, int, int, str]] = []    # (이름, 시작, 끝, 색)
+        self.excluded: List[Tuple[int, int]] = []
+        self.range: Tuple[Optional[int], Optional[int]] = (None, None)
+        self.pending_start: Optional[int] = None
+        self.cursor = 0
+        self.setFixedHeight(58)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip("전체 프레임 한눈에 보기 — 위: 세션, 빨강: 제외, 파랑: 선택한 구간, 노랑: 현재 위치. 클릭하면 이동")
+
+    def set_state(self, n, sessions, excluded, rng, pending_start, cursor) -> None:
+        self.n, self.sessions, self.excluded, self.range = n, sessions, excluded, rng
+        self.pending_start, self.cursor = pending_start, cursor
+        self.update()
+
+    def _x(self, i: float) -> float:
+        return 10 + (self.width() - 20) * (i / max(1, self.n))
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor(C_PANEL))
+        if not self.n:
+            return
+        p.setRenderHint(QPainter.Antialiasing)
+        f = QFont(); f.setPointSize(8); p.setFont(f)
+        label_y, track_y, track_h = 4, 24, 22
+        for name, a, b, color in self.sessions:
+            x0, x1 = self._x(a), self._x(b + 1)
+            c = QColor(color)
+            p.setPen(Qt.NoPen)
+            c.setAlpha(70); p.setBrush(c)
+            p.drawRect(QRectF(x0, track_y, x1 - x0, track_h))
+            p.setBrush(QColor(color)); p.drawRect(QRectF(x0, label_y + 14, x1 - x0, 3))
+            p.setPen(QColor(C_TEXT))
+            text = f"세션 {name}  ·  {b - a + 1}장"
+            if p.fontMetrics().horizontalAdvance(text) < x1 - x0 - 8:
+                p.drawText(QRectF(x0 + 4, label_y, x1 - x0 - 8, 14), Qt.AlignVCenter | Qt.AlignLeft, text)
+            p.setPen(QPen(QColor(C_BG), 2)); p.drawLine(QPointF(x1, label_y), QPointF(x1, track_y + track_h))
+        p.setPen(Qt.NoPen); p.setBrush(QColor(C_DANGER))
+        for a, b in self.excluded:
+            p.drawRect(QRectF(self._x(a), track_y + 6, max(1.5, self._x(b + 1) - self._x(a)), track_h - 12))
+        lo, hi = self.range
+        if lo is not None:
+            c = QColor(C_ACCENT); c.setAlpha(110)
+            p.setBrush(c); p.setPen(QPen(QColor("#9cc2ff"), 1.5))
+            p.drawRect(QRectF(self._x(lo), track_y - 2, max(3.0, self._x(hi + 1) - self._x(lo)), track_h + 4))
+        elif self.pending_start is not None:
+            p.setPen(QPen(QColor("#9cc2ff"), 2, Qt.DashLine))
+            xs = self._x(self.pending_start)
+            p.drawLine(QPointF(xs, track_y - 2), QPointF(xs, track_y + track_h + 2))
+        xc = self._x(self.cursor + 0.5)
+        p.setPen(QPen(QColor(C_AMBER), 2)); p.drawLine(QPointF(xc, track_y - 4), QPointF(xc, track_y + track_h + 4))
+        p.setBrush(QColor(C_AMBER)); p.setPen(Qt.NoPen)
+        p.drawPolygon(QPolygonF([QPointF(xc - 5, track_y - 6), QPointF(xc + 5, track_y - 6), QPointF(xc, track_y)]))
+
+    def _seek_at(self, x: float) -> None:
+        if self.n:
+            i = int((x - 10) / max(1, self.width() - 20) * self.n)
+            self.seek.emit(max(0, min(self.n - 1, i)))
+
+    def mousePressEvent(self, e) -> None:  # noqa: N802
+        self._seek_at(e.position().x())
+
+    def mouseMoveEvent(self, e) -> None:  # noqa: N802
+        if e.buttons() & Qt.LeftButton:
+            self._seek_at(e.position().x())
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +327,34 @@ class ThumbWorker(QObject):
             self.finished.emit()
 
 
+class ShortcutDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("단축키")
+        grid = QGridLayout(self)
+        grid.setContentsMargins(20, 16, 20, 16); grid.setHorizontalSpacing(18); grid.setVerticalSpacing(6)
+        row = 0
+        for group, items in SHORTCUTS:
+            t = QLabel(group); t.setStyleSheet(f"font-weight:700; color:{C_AMBER}; padding-top:8px;")
+            grid.addWidget(t, row, 0, 1, 2); row += 1
+            for key, desc in items:
+                k = QLabel(key)
+                k.setStyleSheet(f"background:{C_CARD}; border:1px solid {C_BORDER}; border-radius:4px; padding:2px 8px;"
+                                "font-family: Consolas, monospace;")
+                grid.addWidget(k, row, 0, Qt.AlignLeft); grid.addWidget(QLabel(desc), row, 1); row += 1
+        close = QPushButton("닫기"); close.clicked.connect(self.accept)
+        grid.addWidget(close, row, 1, Qt.AlignRight)
+
+
+def card(title: str, hint: str = "") -> Tuple[QFrame, QVBoxLayout]:
+    f = QFrame(); f.setObjectName("card")
+    lay = QVBoxLayout(f); lay.setContentsMargins(12, 10, 12, 12); lay.setSpacing(6)
+    t = QLabel(title); t.setObjectName("cardTitle"); lay.addWidget(t)
+    if hint:
+        h = QLabel(hint); h.setObjectName("hint"); h.setWordWrap(True); lay.addWidget(h)
+    return f, lay
+
+
 # ---------------------------------------------------------------------------
 # 메인 창
 # ---------------------------------------------------------------------------
@@ -135,91 +367,140 @@ class MainWindow(QMainWindow):
         self.index = 0
         self.range_start: Optional[int] = None
         self.range_end: Optional[int] = None
+        self._history: List[List[str]] = []                 # 되돌리기 순서: 한 번의 조작이 건드린 세션들
+        self._thumbs: Dict[int, QPixmap] = {}
+        self._flag_state: List[Optional[Tuple[bool, bool]]] = []
+        self._session_span: Dict[str, Tuple[int, int]] = {}
         self._thumb_thread: Optional[QThread] = None
         self._thumb_worker: Optional[ThumbWorker] = None
         self._play = QTimer(self)
         self._play.timeout.connect(self._play_tick)
-        self.setWindowTitle("자율주행 RC카 데이터 가공")
-        self.resize(1280, 820)
+        self.setWindowTitle(APP_TITLE)
+        self.setStyleSheet(QSS)
+        self.resize(1360, 900)
+        self.setMinimumSize(1000, 680)
+        self._logo = QPixmap(str(LOGO_PATH)) if LOGO_PATH.exists() else QPixmap()
+        if not self._logo.isNull():
+            self.setWindowIcon(self._make_icon())
         self._build_ui()
-        self._build_actions()
+        self._build_shortcuts()
         self._refresh_all()
 
+    def _make_icon(self) -> QIcon:
+        pm = QPixmap(64, 64); pm.fill(Qt.transparent)
+        p = QPainter(pm); p.setRenderHint(QPainter.Antialiasing)
+        p.setBrush(QColor(C_HEADER)); p.setPen(Qt.NoPen); p.drawRoundedRect(0, 0, 64, 64, 12, 12)
+        p.drawPixmap(8, 8, self._logo.scaled(48, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation)); p.end()
+        return QIcon(pm)
+
     # -- UI ----------------------------------------------------------------
+    def _btn(self, text: str, tip: str, fn, name: str = "") -> QPushButton:
+        b = QPushButton(text)
+        b.setToolTip(tip); b.setFocusPolicy(Qt.NoFocus); b.clicked.connect(fn)
+        if name:
+            b.setObjectName(name)
+        return b
+
     def _build_ui(self) -> None:
+        # 머리띠
+        header = QWidget(); header.setObjectName("header"); header.setFixedHeight(60)
+        hl = QHBoxLayout(header); hl.setContentsMargins(16, 6, 16, 6); hl.setSpacing(12)
+        if not self._logo.isNull():
+            lg = QLabel(); lg.setPixmap(self._logo.scaled(44, 44, Qt.KeepAspectRatio, Qt.SmoothTransformation)); hl.addWidget(lg)
+        titles = QVBoxLayout(); titles.setSpacing(0)
+        org = QLabel("영진전문대 글로벌시스템융합과"); org.setObjectName("org")
+        ttl = QLabel("자율주행 RC카 데이터 가공 프로그램"); ttl.setObjectName("title")
+        titles.addWidget(org); titles.addWidget(ttl)
+        hl.addLayout(titles); hl.addStretch(1)
+        hl.addWidget(self._btn("단축키  F1", "단축키 목록 보기", self.show_shortcuts, "ghost"))
+
+        # 도구 막대: 기능별 묶음
+        bar = QWidget(); bar.setObjectName("toolbar")
+        bl = QHBoxLayout(bar); bl.setContentsMargins(12, 8, 12, 8); bl.setSpacing(6)
+
+        def group(label: str, buttons: List[QPushButton]) -> None:
+            box = QVBoxLayout(); box.setSpacing(3)
+            box.addWidget(QLabel(label))
+            row = QHBoxLayout(); row.setSpacing(6)
+            for b in buttons:
+                row.addWidget(b)
+            box.addLayout(row); bl.addLayout(box)
+            sep = QFrame(); sep.setFrameShape(QFrame.VLine); sep.setStyleSheet(f"color:{C_BORDER};"); bl.addWidget(sep)
+        group("세션", [self._btn("폴더 열기", "세션 폴더 열기 (Ctrl+O). 여러 번 열면 세션이 추가된다", self.open_folder_dialog),
+                     self._btn("zip 열기", "세션 zip 열기 (Ctrl+Shift+O)", self.open_zip_dialog)])
+        group("구간 선택", [self._btn("[ 시작", "현재 장을 구간 시작점으로 ( [ )", self.mark_range_start),
+                        self._btn("끝 ]", "현재 장을 구간 끝점으로 ( ] )", self.mark_range_end),
+                        self._btn("해제", "구간 선택 해제 (Esc)", self.clear_range)])
+        group("제외 · 복구", [self._btn("제외", "구간(없으면 현재 장)을 데이터셋에서 제외 (Delete)", self.exclude_selection, "danger"),
+                          self._btn("복구", "구간(없으면 현재 장)을 다시 포함 (Insert)", self.restore_selection),
+                          self._btn("되돌리기", "마지막 제외/복구 되돌리기 (Ctrl+Z)", self.undo)])
+        self.play_btn = self._btn("▶ 재생", "자동 재생 · 정지 (Space)", self.toggle_play)
+        group("보기", [self.play_btn])
+        bl.addStretch(1)
+        self.build_btn = self._btn("데이터셋 만들기", "포함된 사진으로 dataset_*.zip 생성 (Ctrl+B)", self.build_dataset_dialog, "primary")
+        self.build_btn.setMinimumHeight(38)
+        bl.addWidget(self.build_btn, 0, Qt.AlignBottom)
+
+        # 가운데: 사진 + 옆 패널
         self.view = FrameView()
-        self.sessions_list = QListWidget()
-        self.sessions_list.setMaximumHeight(120)
-        self.counts = QTableWidget(0, 4)
-        self.counts.setHorizontalHeaderLabels(["각도", "포함", "제외", "비율"])
-        self.counts.verticalHeader().setVisible(False)
-        self.counts.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.info = QLabel()
-        self.info.setWordWrap(True)
-        self.help = QLabel("←/→ 한 장 · PgUp/PgDn 10장 · Home/End · Space 재생\n"
-                           "[ ] 구간 · Delete 제외 · Insert 복구 · X 토글 · Ctrl+Z 되돌리기\n"
-                           "Ctrl+O 폴더 열기 · Ctrl+S 저장 · Ctrl+B 데이터셋 만들기")
-        self.help.setStyleSheet("color: #888;")
-        right = QWidget()
-        rl = QVBoxLayout(right)
-        rl.addWidget(QLabel("세션"))
-        rl.addWidget(self.sessions_list)
-        rl.addWidget(QLabel("클래스별 장수 (포함 기준)"))
-        rl.addWidget(self.counts)
-        rl.addWidget(self.info)
-        rl.addStretch(1)
-        rl.addWidget(self.help)
-        right.setMinimumWidth(300)
-        self.strip = QListWidget()
-        self.strip.setFlow(QListWidget.LeftToRight)
-        self.strip.setViewMode(QListWidget.IconMode)
-        self.strip.setWrapping(False)
-        self.strip.setMovement(QListWidget.Static)
+        side_inner = QWidget(); side_inner.setObjectName("side")
+        sl = QVBoxLayout(side_inner); sl.setContentsMargins(12, 10, 12, 10); sl.setSpacing(8)
+
+        c, lay = card("세션", "수집기를 한 번 실행해 찍은 폴더. 파일로 남으며, 여러 세션을 열어 한 데이터셋으로 합칠 수 있다.")
+        self.sessions_list = QListWidget(); self.sessions_list.setObjectName("sessions")
+        self.sessions_list.setFocusPolicy(Qt.NoFocus); self.sessions_list.setFixedHeight(50)
+        self.sessions_list.itemClicked.connect(self._on_session_clicked)
+        lay.addWidget(self.sessions_list); sl.addWidget(c)
+
+        c, lay = card("구간 선택", "한꺼번에 제외·복구하려고 잡는 연속된 사진 묶음. 임시 선택이라 저장되지 않는다.")
+        self.range_label = QLabel(); self.range_label.setObjectName("value"); self.range_label.setWordWrap(True)
+        lay.addWidget(self.range_label); sl.addWidget(c)
+
+        c, lay = card("클래스 분포", "조향 각도별 포함 장수와 비율. 빨강은 제외된 장수.")
+        self.chart = BarChart(); lay.addWidget(self.chart)
+        self.total_label = QLabel(); self.total_label.setObjectName("value"); lay.addWidget(self.total_label)
+        sl.addWidget(c)
+
+        c, lay = card("현재 프레임")
+        self.info = QLabel(); self.info.setObjectName("value"); self.info.setWordWrap(True)
+        self.info.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        lay.addWidget(self.info); sl.addWidget(c)
+        sl.addStretch(1)
+        side = QScrollArea(); side.setWidget(side_inner); side.setWidgetResizable(True)
+        side.setFixedWidth(372); side.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        mid = QHBoxLayout(); mid.setContentsMargins(0, 0, 0, 0); mid.setSpacing(0)
+        mid.addWidget(self.view, 1); mid.addWidget(side)
+
+        # 아래: 타임라인 + 필름스트립
+        self.timeline = Timeline(); self.timeline.seek.connect(self.goto)
+        self.strip = QListWidget(); self.strip.setObjectName("strip")
+        self.strip.setFlow(QListWidget.LeftToRight); self.strip.setViewMode(QListWidget.IconMode)
+        self.strip.setWrapping(False); self.strip.setMovement(QListWidget.Static); self.strip.setFocusPolicy(Qt.NoFocus)
         px = self.cfg.curator.thumb_px
-        self.strip.setIconSize(QSize(px, px))
-        self.strip.setFixedHeight(px + 44)
-        self.strip.setUniformItemSizes(True)
+        self.strip.setIconSize(QSize(px, int(px * 0.75))); self.strip.setFixedHeight(int(px * 0.75) + 54); self.strip.setUniformItemSizes(True)
+        self.strip.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.strip.currentRowChanged.connect(self._on_strip_row)
-        top = QSplitter(Qt.Horizontal)
-        top.addWidget(self.view)
-        top.addWidget(right)
-        top.setStretchFactor(0, 1)
+
         central = QWidget()
-        cl = QVBoxLayout(central)
-        cl.addWidget(top, 1)
-        cl.addWidget(self.strip)
+        cl = QVBoxLayout(central); cl.setContentsMargins(0, 0, 0, 0); cl.setSpacing(0)
+        cl.addWidget(header); cl.addWidget(bar); cl.addLayout(mid, 1); cl.addWidget(self.timeline); cl.addWidget(self.strip)
         self.setCentralWidget(central)
         self.statusBar().showMessage("준비")
 
-    def _build_actions(self) -> None:
-        tb = self.addToolBar("도구")
-        tb.setMovable(False)
-
-        def act(text, shortcut, fn):
-            a = QAction(text, self)
-            if shortcut:
-                a.setShortcut(QKeySequence(shortcut))
-            a.triggered.connect(fn)
-            self.addAction(a)
-            tb.addAction(a)
-            return a
-        act("폴더 열기", "Ctrl+O", self.open_folder_dialog)
-        act("zip 열기", "Ctrl+Shift+O", self.open_zip_dialog)
-        act("저장", "Ctrl+S", self.save)
-        act("데이터셋 만들기", "Ctrl+B", self.build_dataset_dialog)
-        tb.addSeparator()
-        act("제외", "Delete", self.exclude_selection)
-        act("복구", "Insert", self.restore_selection)
-        act("토글", "X", self.toggle_current)
-        act("되돌리기", "Ctrl+Z", self.undo)
-        tb.addSeparator()
-        act("재생/정지", "Space", self.toggle_play)
-        # 이동 키 (툴바에는 안 보임)
-        for key, fn in (("Left", lambda: self.goto(self.index - 1)), ("Right", lambda: self.goto(self.index + 1)),
+    def _build_shortcuts(self) -> None:
+        for key, fn in (("Ctrl+O", self.open_folder_dialog), ("Ctrl+Shift+O", self.open_zip_dialog), ("Ctrl+S", self.save),
+                        ("Ctrl+B", self.build_dataset_dialog), ("Delete", self.exclude_selection),
+                        ("Insert", self.restore_selection), ("X", self.toggle_current), ("Ctrl+Z", self.undo),
+                        ("Space", self.toggle_play), ("F1", self.show_shortcuts),
+                        ("Left", lambda: self.goto(self.index - 1)), ("Right", lambda: self.goto(self.index + 1)),
                         ("PgUp", lambda: self.goto(self.index - 10)), ("PgDown", lambda: self.goto(self.index + 10)),
                         ("Home", lambda: self.goto(0)), ("End", lambda: self.goto(len(self.frames) - 1)),
                         ("[", self.mark_range_start), ("]", self.mark_range_end), ("Escape", self.clear_range)):
             a = QAction(self); a.setShortcut(QKeySequence(key)); a.triggered.connect(fn); self.addAction(a)
+
+    def show_shortcuts(self) -> None:
+        ShortcutDialog(self).exec()
 
     # -- 세션 ------------------------------------------------------------
     def open_paths(self, paths: List[str]) -> None:
@@ -244,27 +525,55 @@ class MainWindow(QMainWindow):
         self.ws.save()
         self.statusBar().showMessage("curation.json 저장", 2000)
 
+    def _session_color(self, name: str) -> str:
+        names = sorted(s.name for s in self.ws.sessions)
+        return SESSION_COLORS[names.index(name) % len(SESSION_COLORS)]
+
+    def _on_session_clicked(self, item: QListWidgetItem) -> None:
+        span = self._session_span.get(item.data(Qt.UserRole))
+        if span:
+            self.goto(span[0])
+
     # -- 표시 ------------------------------------------------------------
     def _refresh_all(self) -> None:
         self.frames = self.ws.frames()
         self.index = min(self.index, max(0, len(self.frames) - 1))
         self.range_start = self.range_end = None
-        self.sessions_list.clear()
-        for s in sorted(self.ws.sessions, key=lambda s: s.name):
-            self.sessions_list.addItem(f"{s.name}  ({len(s.frames)}장, 불량 표시 {len(s.marks)}회)")
+        self._session_span = {}
+        for i, f in enumerate(self.frames):
+            a, _ = self._session_span.get(f.session, (i, i))
+            self._session_span[f.session] = (a, i)
         self._rebuild_strip()
+        self._refresh_sessions()
         self._show_current()
         self._refresh_counts()
+        has = bool(self.frames)
+        self.build_btn.setEnabled(has)
+
+    def _refresh_sessions(self) -> None:
+        self.sessions_list.clear()
+        for s in sorted(self.ws.sessions, key=lambda s: s.name):
+            exc = len(self.ws.curations[s.name].excluded)
+            chip = QPixmap(12, 28); chip.fill(QColor(self._session_color(s.name)))
+            it = QListWidgetItem(QIcon(chip), f"{s.name}{'  (zip)' if s.is_zip else ''}\n"
+                                              f"{len(s.frames)}장 · 포함 {len(s.frames) - exc} · 제외 {exc} · □ 표시 {len(s.marks)}회")
+            it.setData(Qt.UserRole, s.name)
+            self.sessions_list.addItem(it)
+        self.sessions_list.setFixedHeight(min(3, max(1, len(self.ws.sessions))) * 48 + 4)   # 내용만큼만 (3개 넘으면 스크롤)
+        if not self.ws.sessions:
+            it = QListWidgetItem("열린 세션이 없습니다. ‘폴더 열기’ 로 추가하세요."); it.setFlags(Qt.NoItemFlags)
+            self.sessions_list.addItem(it)
 
     def _rebuild_strip(self) -> None:
         self._stop_thumbs()
+        self._thumbs = {}
+        self._flag_state = [None] * len(self.frames)
         self.strip.blockSignals(True)
         self.strip.clear()
         px = self.cfg.curator.thumb_px
         for f in self.frames:
-            it = QListWidgetItem(f"a{f.info.angle:03d}")
-            it.setSizeHint(QSize(px + 8, px + 36))
-            it.setTextAlignment(Qt.AlignHCenter)
+            it = QListWidgetItem(f"{f.info.angle}°")
+            it.setSizeHint(QSize(px + 10, int(px * 0.75) + 30)); it.setTextAlignment(Qt.AlignHCenter)
             self.strip.addItem(it)
         self.strip.blockSignals(False)
         self._paint_strip_flags()
@@ -290,27 +599,57 @@ class MainWindow(QMainWindow):
         self._thumb_thread = self._thumb_worker = None
 
     def _on_thumb(self, idx: int, img: QImage) -> None:
-        it = self.strip.item(idx)
-        if it is not None and not img.isNull():
-            it.setIcon(QIcon(QPixmap.fromImage(img)))
+        if idx < len(self.frames) and not img.isNull():
+            self._thumbs[idx] = QPixmap.fromImage(img)
+            self._flag_state[idx] = None
+            self._paint_strip_item(idx)
+
+    def _strip_icon(self, idx: int, excluded: bool, in_range: bool) -> QIcon:
+        px = self.cfg.curator.thumb_px
+        base = self._thumbs.get(idx)
+        pm = QPixmap(px, int(px * 0.75)); pm.fill(QColor("#30353f"))
+        p = QPainter(pm)
+        if base is not None:
+            p.drawPixmap(0, 0, base.scaled(pm.size(), Qt.IgnoreAspectRatio, Qt.SmoothTransformation))
+        if excluded:
+            p.fillRect(pm.rect(), QColor(210, 30, 30, 120))
+            p.setPen(QPen(QColor("white"), 3)); m = pm.height() * 0.3
+            cx, cy = pm.width() / 2, pm.height() / 2
+            p.drawLine(QPointF(cx - m, cy - m), QPointF(cx + m, cy + m)); p.drawLine(QPointF(cx - m, cy + m), QPointF(cx + m, cy - m))
+        if in_range:
+            p.fillRect(0, 0, pm.width(), 5, QColor(C_ACCENT)); p.fillRect(0, pm.height() - 5, pm.width(), 5, QColor(C_ACCENT))
+        p.end()
+        return QIcon(pm)
+
+    def _paint_strip_item(self, i: int) -> None:
+        it = self.strip.item(i)
+        if it is None:
+            return
+        lo, hi = self._range()
+        state = (self.ws.is_excluded(self.frames[i]), lo is not None and lo <= i <= hi)
+        if self._flag_state[i] == state:
+            return
+        self._flag_state[i] = state
+        it.setIcon(self._strip_icon(i, *state))
+        it.setForeground(QBrush(QColor("#ff8f8f" if state[0] else C_MUTED)))
 
     def _paint_strip_flags(self) -> None:
-        lo, hi = self._range()
-        for i, f in enumerate(self.frames):
-            it = self.strip.item(i)
-            if it is None:
-                continue
-            ex = self.ws.is_excluded(f)
-            in_range = lo is not None and lo <= i <= hi
-            it.setText(("✕ " if ex else "") + f"a{f.info.angle:03d}")
-            it.setBackground(QBrush(QColor(255, 220, 220)) if ex else (QBrush(QColor(220, 235, 255)) if in_range else QBrush()))
-            it.setForeground(QBrush(QColor(170, 0, 0)) if ex else QBrush(QColor(30, 30, 30)))
+        for i in range(len(self.frames)):
+            self._paint_strip_item(i)
+
+    def _refresh_timeline(self) -> None:
+        sessions = [(name, a, b, self._session_color(name)) for name, (a, b) in sorted(self._session_span.items())]
+        excluded = runs([self.ws.is_excluded(f) for f in self.frames])
+        self.timeline.set_state(len(self.frames), sessions, excluded, self._range(),
+                                self.range_start if self.range_end is None else None, self.index)
 
     def _show_current(self) -> None:
+        self._refresh_timeline()
+        self._refresh_range_label()
         if not self.frames:
             self.view.set_frame(None, 0.0, "", None)
-            self.info.setText("")
-            self.statusBar().showMessage("세션을 여세요")
+            self.info.setText(f"<span style='color:{C_MUTED}'>세션을 열면 사진 정보가 여기에 나옵니다.</span>")
+            self.statusBar().showMessage("세션을 여세요  ·  단축키는 F1")
             return
         f = self.frames[self.index]
         img = QImage.fromData(self.ws.read_image(f))
@@ -318,30 +657,48 @@ class MainWindow(QMainWindow):
         side = self.ws.steering.logical_side(f.info.angle)
         rot = arrow_rotation_deg(side, self.cfg.curator.arrow_max_deg, self.cfg.curator.arrow_invert)
         reason = self.ws.curation(f).excluded.get(f.name)
-        cap = f"{self.index + 1}/{len(self.frames)}   {f.info.angle:3d}°   {f.info.speed}%   {f.info.timestamp:%H:%M:%S.%f}"[:-3]
-        self.view.set_frame(pm, rot, cap, reason)
-        lo, hi = self._range()
-        rng = f"구간 {lo + 1}~{hi + 1} ({hi - lo + 1}장)" if lo is not None else ("구간 시작 " + str(self.range_start + 1) if self.range_start is not None else "구간 없음")
-        self.info.setText(f"<b>{f.name}</b><br>세션 {f.session}<br>{'제외됨: ' + reason if reason else '포함'}<br>{rng}")
-        self.statusBar().showMessage(f"{self.index + 1}/{len(self.frames)}  {f.key}")
+        ts = f"{f.info.timestamp:%H:%M:%S}.{f.info.timestamp.microsecond // 1000:03d}"
+        self.view.set_frame(pm, rot, f"{self.index + 1} / {len(self.frames)}     조향 {f.info.angle}°     속도 {f.info.speed}%     {ts}", reason)
+        a, b = self._session_span[f.session]
+        state = (f"<span style='color:{C_DANGER}'>제외 — {'□ 불량 표시 구간' if reason == REASON_MARK else '직접 제외'}</span>"
+                 if reason else f"<span style='color:{C_OK}'>포함</span>")
+        self.info.setText(
+            f"<table cellspacing='3'>"
+            f"<tr><td style='color:{C_MUTED}'>파일</td><td>{f.name}</td></tr>"
+            f"<tr><td style='color:{C_MUTED}'>세션</td><td>{f.session} &nbsp;({self.index - a + 1} / {b - a + 1})</td></tr>"
+            f"<tr><td style='color:{C_MUTED}'>라벨</td><td>조향 {f.info.angle}° · 속도 {f.info.speed}%</td></tr>"
+            f"<tr><td style='color:{C_MUTED}'>상태</td><td>{state}</td></tr></table>")
+        self.statusBar().showMessage(f"{self.index + 1} / {len(self.frames)}   {f.key}   ·   제외는 자동 저장됩니다 (curation.json)")
+        self.chart.set_data(self.chart.data, self.ws.steering.quantize(f.info.angle))
+        for r in range(self.sessions_list.count()):
+            it = self.sessions_list.item(r)
+            if it.data(Qt.UserRole) == f.session:
+                self.sessions_list.setCurrentRow(r)
         self.strip.blockSignals(True)
         self.strip.setCurrentRow(self.index)
         self.strip.scrollToItem(self.strip.item(self.index), QListWidget.PositionAtCenter)
         self.strip.blockSignals(False)
 
+    def _refresh_range_label(self) -> None:
+        lo, hi = self._range()
+        if lo is not None:
+            sess = sorted({f.session for f in self.frames[lo:hi + 1]})
+            span = f" · 세션 {len(sess)}개에 걸침" if len(sess) > 1 else ""
+            self.range_label.setText(f"<b style='color:#9cc2ff'>{lo + 1} ~ {hi + 1}번</b> &nbsp;({hi - lo + 1}장{span})<br>"
+                                     f"<span style='color:{C_MUTED}'>Delete 로 제외, Insert 로 복구, Esc 로 해제</span>")
+        elif self.range_start is not None:
+            self.range_label.setText(f"시작 <b style='color:#9cc2ff'>{self.range_start + 1}번</b> — 끝으로 이동한 뒤 <b>]</b>")
+        else:
+            self.range_label.setText(f"<span style='color:{C_MUTED}'>선택 없음 — 시작 사진에서 <b>[</b>, 끝 사진에서 <b>]</b><br>"
+                                     "선택이 없으면 제외·복구는 현재 한 장에만 적용</span>")
+
     def _refresh_counts(self) -> None:
         inc, exc = self.ws.counts()
-        total = sum(inc.values())
-        classes = list(self.ws.steering.classes)
-        self.counts.setRowCount(len(classes) + 1)
-        for r, c in enumerate(classes):
-            share = inc[c] / total * 100 if total else 0.0
-            for col, text in enumerate((f"{c}°", str(inc[c]), str(exc[c]), f"{share:4.1f} %")):
-                self.counts.setItem(r, col, QTableWidgetItem(text))
-        for col, text in enumerate(("합계", str(total), str(sum(exc.values())), "100 %" if total else "0 %")):
-            it = QTableWidgetItem(text); it.setFont(QFont("", -1, QFont.Bold))
-            self.counts.setItem(len(classes), col, it)
-        self.counts.resizeColumnsToContents()
+        cur = self.ws.steering.quantize(self.frames[self.index].info.angle) if self.frames else None
+        self.chart.set_data([(c, inc[c], exc[c]) for c in self.ws.steering.classes], cur)
+        ti, te = sum(inc.values()), sum(exc.values())
+        self.total_label.setText(f"포함 <b>{ti}</b>장 &nbsp;·&nbsp; <span style='color:{C_DANGER}'>제외 {te}장</span>"
+                                 f" &nbsp;·&nbsp; 전체 {ti + te}장")
 
     # -- 이동 ------------------------------------------------------------
     def goto(self, i: int) -> None:
@@ -357,13 +714,13 @@ class MainWindow(QMainWindow):
 
     def toggle_play(self) -> None:
         if self._play.isActive():
-            self._play.stop()
-        else:
-            self._play.start(int(1000 / self.cfg.curator.autoplay_fps))
+            self._play.stop(); self.play_btn.setText("▶ 재생")
+        elif self.frames:
+            self._play.start(int(1000 / self.cfg.curator.autoplay_fps)); self.play_btn.setText("■ 정지")
 
     def _play_tick(self) -> None:
         if self.index >= len(self.frames) - 1:
-            self._play.stop()
+            self._play.stop(); self.play_btn.setText("▶ 재생")
         else:
             self.goto(self.index + 1)
 
@@ -374,10 +731,14 @@ class MainWindow(QMainWindow):
         return min(self.range_start, self.range_end), max(self.range_start, self.range_end)
 
     def mark_range_start(self) -> None:
+        if not self.frames:
+            return
         self.range_start, self.range_end = self.index, None
         self._paint_strip_flags(); self._show_current()
 
     def mark_range_end(self) -> None:
+        if not self.frames:
+            return
         if self.range_start is None:
             self.range_start = self.index
         self.range_end = self.index
@@ -395,38 +756,52 @@ class MainWindow(QMainWindow):
 
     def _after_change(self, msg: str) -> None:
         self.ws.save()                                  # 바뀔 때마다 저장: 원본이 아니라 curation.json 만
-        self._paint_strip_flags(); self._show_current(); self._refresh_counts()
+        self._paint_strip_flags(); self._refresh_sessions(); self._show_current(); self._refresh_counts()
         self.statusBar().showMessage(msg, 3000)
+
+    def _change(self, sel: List[Frame], exclude: bool) -> None:
+        touched = []
+        for s in sorted({f.session for f in sel}):
+            cur = self.ws.curations[s]
+            depth = len(cur._undo)
+            names = [f.name for f in sel if f.session == s]
+            cur.exclude(names) if exclude else cur.restore(names)
+            if len(cur._undo) > depth:
+                touched.append(s)
+        if touched:
+            self._history.append(touched)
 
     def exclude_selection(self) -> None:
         sel = self._selection()
-        for s in {f.session for f in sel}:
-            self.ws.curations[s].exclude([f.name for f in sel if f.session == s])
-        self.clear_range()
+        if not sel:
+            return
+        self._change(sel, True)
+        self.range_start = self.range_end = None
         self._after_change(f"{len(sel)}장 제외")
 
     def restore_selection(self) -> None:
         sel = self._selection()
-        for s in {f.session for f in sel}:
-            self.ws.curations[s].restore([f.name for f in sel if f.session == s])
-        self.clear_range()
+        if not sel:
+            return
+        self._change(sel, False)
+        self.range_start = self.range_end = None
         self._after_change(f"{len(sel)}장 복구")
 
     def toggle_current(self) -> None:
         if not self.frames:
             return
         f = self.frames[self.index]
-        self.ws.curation(f).toggle(f.name)
+        self._change([f], not self.ws.is_excluded(f))
         self._after_change("제외" if self.ws.is_excluded(f) else "복구")
 
     def undo(self) -> None:
-        for s in sorted(self.ws.sessions, key=lambda s: s.name):       # 마지막으로 바꾼 세션부터는 알 수 없으므로 순서대로 시도
-            c = self.ws.curations[s.name]
-            if c.can_undo:
-                label = c.undo()
-                self._after_change(f"되돌리기: {label}")
-                return
-        self.statusBar().showMessage("되돌릴 것이 없습니다", 2000)
+        if not self._history:
+            self.statusBar().showMessage("되돌릴 것이 없습니다", 2000)
+            return
+        for s in self._history.pop():
+            if s in self.ws.curations:
+                self.ws.curations[s].undo()
+        self._after_change("되돌리기")
 
     # -- 데이터셋 ----------------------------------------------------------
     def build_dataset_dialog(self) -> None:
