@@ -56,6 +56,11 @@ QPushButton:disabled {{ color: #5d6575; }}
 QPushButton#primary {{ background: {C_ACCENT}; border-color: {C_ACCENT}; color: white; font-weight: 700; }}
 QPushButton#primary:hover {{ background: #5a97f8; }}
 QPushButton#danger {{ color: #ff8f8f; }}
+QFrame#seg {{ background: #171b22; border: 1px solid {C_BORDER}; border-radius: 8px; }}
+QPushButton#segBtn {{ background: transparent; border: none; border-radius: 6px; padding: 3px 0; min-width: 40px;
+                     color: #8f99aa; font-weight: 600; }}
+QPushButton#segBtn:hover {{ background: #2a303c; color: {C_TEXT}; }}
+QPushButton#segBtn:checked {{ background: {C_ACCENT}; color: white; font-weight: 700; }}
 QPushButton#ghost {{ background: transparent; border-color: #5f7396; color: #dbe6f7; }}
 #side {{ background: {C_PANEL}; border-left: 1px solid {C_BORDER}; }}
 #sideLeft {{ background: {C_PANEL}; border-right: 1px solid {C_BORDER}; }}
@@ -751,11 +756,17 @@ class MainWindow(QMainWindow):
                           self._btn("복구", "선택한 사진(없으면 현재 장)을 다시 포함 (Insert)", self.restore_selection),
                           self._btn("되돌리기", "마지막 제외/복구 되돌리기 (Ctrl+Z)", self.undo)])
         self.play_btn = self._btn("▶ 재생", "자동 재생 · 정지 (Space)", self.toggle_play)
-        self.speed_btn = self._btn("", "재생 배속: 1배 = 실제 주행 속도. 누르면 1 → 2 → 5 → 10배 순으로 바뀐다 (+ / -)",
-                                   self.cycle_speed)
-        self.speed_btn.setFixedWidth(52)
+        self.play_btn.setMinimumWidth(78)
+        seg = QFrame(); seg.setObjectName("seg")       # 배속: 네 칸 중 하나가 켜져 있는 선택 버튼
+        sr = QHBoxLayout(seg); sr.setContentsMargins(3, 3, 3, 3); sr.setSpacing(2)
+        self.speed_btns: Dict[int, QPushButton] = {}
+        for v in PLAY_SPEEDS:
+            b = self._btn(f"{v}×", f"{v}배속" + (" · 실제 주행 속도" if v == 1 else "") + "  (+ / - 키로도 바꿀 수 있다)",
+                          lambda _=False, v=v: self.set_speed(v), "segBtn")
+            b.setCheckable(True); b.setAutoExclusive(True)
+            self.speed_btns[v] = b; sr.addWidget(b)
         self.set_speed(self.cfg.curator.autoplay_speed)
-        group("보기", [self.play_btn, self.speed_btn])
+        group("재생 · 배속", [self.play_btn, seg])
         bl.addStretch(1)
         self.build_btn = self._btn("데이터셋 만들기", "포함된 사진으로 dataset_*.zip 생성 (Ctrl+B)", self.build_dataset_dialog, "primary")
         self.build_btn.setMinimumHeight(38)
@@ -1120,12 +1131,9 @@ class MainWindow(QMainWindow):
 
     def set_speed(self, speed: float) -> None:
         self.speed = min(PLAY_SPEEDS, key=lambda v: abs(v - speed))
-        self.speed_btn.setText(f"{self.speed}×")
+        self.speed_btns[self.speed].setChecked(True)
         if self._play.isActive():
             self._play.setInterval(self._play_delay())
-
-    def cycle_speed(self) -> None:
-        self.set_speed(PLAY_SPEEDS[(PLAY_SPEEDS.index(self.speed) + 1) % len(PLAY_SPEEDS)])
 
     def step_speed(self, step: int) -> None:
         k = min(len(PLAY_SPEEDS) - 1, max(0, PLAY_SPEEDS.index(self.speed) + step))

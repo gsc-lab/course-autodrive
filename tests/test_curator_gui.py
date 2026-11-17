@@ -71,11 +71,12 @@ def test_window_opens_navigates_excludes_and_builds(qapp, tmp_path):
         assert (info["in_session"], info["session_len"], info["overall"], info["total"]) == (6, 12, 6, 12)
         assert info["angle"] == 30 and info["side"] == -1.0 and info["speed"] == 45 and info["reason"] is None   # 5번 = 30°(왼쪽 끝)
         win.goto(2); assert win.info.d["reason"] == "mark"                   # □ 구간이라 미리 제외된 사진
-        assert win.speed == 5 and win.speed_btn.text() == "5×"                # 처음 값 = config 의 autoplay_speed
-        win.cycle_speed(); assert win.speed == 10
-        win.cycle_speed(); assert win.speed == 1 and win.speed_btn.text() == "1×"     # 10 다음은 다시 1
+        checked = lambda: [v for v, b in win.speed_btns.items() if b.isChecked()]
+        assert win.speed == 2 and checked() == [2]                          # 처음 값 = config 의 autoplay_speed
+        win.speed_btns[10].click(); assert win.speed == 10 and checked() == [10]
+        win.speed_btns[1].click(); assert win.speed == 1 and checked() == [1]
         win.step_speed(-1); assert win.speed == 1                           # 끝에서는 그대로
-        win.step_speed(1); assert win.speed == 2
+        win.step_speed(1); assert win.speed == 2 and checked() == [2]
         win.goto(0); assert win._play_delay() == 250                        # 0.5초 간격 ÷ 2배
         win.goto(99); assert win.index == 11                                # 끝에서 멈춤
         win.goto(-3); assert win.index == 0

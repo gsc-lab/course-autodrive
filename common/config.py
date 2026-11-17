@@ -158,7 +158,7 @@ class CuratorConfig:
     arrow_max_deg: float = 60.0     # 조향 끝(steering.min/max)일 때 화살표가 기울어지는 각도
     arrow_invert: bool = False      # 화살표가 실제 차의 방향과 반대로 보이면 true (steering.invert 와 별개)
     thumb_px: int = 96              # 필름스트립 썸네일 크기
-    autoplay_speed: float = 5.0     # 자동 재생 배속의 처음 값 (실제 촬영 시간 기준. 1, 2, 5, 10 중 하나)
+    autoplay_speed: float = 2.0     # 자동 재생 배속의 처음 값 (실제 촬영 시간 기준. 1, 2, 5, 10 중 하나)
 
 
 @dataclass
