@@ -221,7 +221,7 @@ class BarChart(QWidget):
             return
         w = self.width()
         rh = self.row_height()
-        big = rh >= 38                                  # 자리가 넉넉하면 글자와 막대를 키운다
+        big = rh >= 34                                  # 자리가 넉넉하면 글자와 막대를 키운다
         label_w, count_w, pct_w, gap = (50, 56, 62, 10) if big else (42, 46, 52, 8)
         x0 = label_w + gap
         track_w = w - x0 - gap - count_w - pct_w
@@ -1029,9 +1029,11 @@ class MainWindow(QMainWindow):
             self.range_label.setText(f"<b style='color:#9cc2ff'>{n}장 선택</b> &nbsp;({where}{span})<br>"
                                      f"<span style='color:{C_MUTED}'><b>Delete</b> 제외 · <b>Insert</b> 복구 · <b>Esc</b> 해제</span>")
         else:
-            self.range_label.setText(f"<span style='color:{C_MUTED}'>"
-                                     "<b>Shift+←/→</b> 또는 <b>Shift+클릭</b>: 연속 선택<br>"
-                                     "<b>Ctrl+클릭</b>: 떨어진 낱장 선택</span>")
+            rows = (("Shift + ← / →", "연속 선택"), ("Shift + 클릭", "클릭한 곳까지 연속 선택"),
+                    ("Ctrl + 클릭", "떨어진 낱장 선택"))
+            self.range_label.setText("<table cellspacing='0' cellpadding='0'>" + "".join(
+                f"<tr><td style='padding:2px 14px 2px 0; color:#c3cad6'><b>{k}</b></td>"
+                f"<td style='padding:2px 0; color:{C_MUTED}'>{v}</td></tr>" for k, v in rows) + "</table>")
 
     def _refresh_counts(self) -> None:
         inc, exc = self.ws.counts()
