@@ -1,7 +1,7 @@
 # Jetson Orin Nano 설정 (JetPack 6.2.x)
 
 새 보드나 새로 구운 이미지에서 수집기·추론기를 돌릴 수 있게 만드는 절차다.
-**스크립트 하나로 끝나고, 같은 스크립트를 다시 실행해도 안전하다(멱등).** 수동 절차는 스크립트가 실패했을 때만 본다.
+**스크립트 하나로 끝나고, 같은 스크립트를 여러 번 실행해도 안전하다.** 수동 절차는 스크립트가 실패했을 때만 본다.
 
 검증한 환경: JetPack 6.2.1 (L4T R36.4.7), Ubuntu 22.04, Python 3.10, TensorRT 10.3, Orin Nano Developer Kit Super.
 
@@ -28,7 +28,7 @@ uv run python -m collector              # 수집 시작
 
 ## 학생 배포: 골든 이미지 복제 (권장)
 
-학생이 설치 과정을 거치지 않게 하려면 **교수가 보드 한 대를 완성한 뒤 SD 카드를 통째로 복제**한다.
+학생이 설치 과정을 거치지 않도록 **교수님이 보드 한 대를 완성한 뒤 SD 카드를 통째로 복제**한다.
 이미지는 모두 학생 개인용이라 계정·비밀번호·설정이 같아도 문제없다.
 
 1. 기준 보드에서 위 "빠른 절차" 를 끝까지 수행하고 `uv run python -m collector --check` 까지 통과시킨다.
@@ -58,7 +58,7 @@ uv run python -m collector              # 수집 시작
 | 그룹 | i2c, input, bluetooth, video, gpio 에 사용자 추가 | 새로 추가된 그룹은 재로그인 후 적용. i2c 는 `/dev/i2c-7`, gpio 는 `/dev/spidev0.0`(도트 매트릭스) 때문 |
 | SPI1 | `config-by-function.py -o dt spi1` (도트 매트릭스용, 헤더 핀 19/21/23/24/26) | 바뀌면 재부팅 필요. jetson-io 를 쓰는 유일한 항목 |
 | bluez | `/etc/bluetooth/input.conf` 에 `ClassicBondedOnly=false` | bluez 5.56+ 기본값은 본딩 전 DS4 의 연결을 거부해 페어링이 실패한다(로그: `Access denied: org.bluez.Error.Rejected`). 수업용 개인 이미지이므로 허용 (2026-11-04 결정) |
-| udev | DS4 라이트바 90-ds4-leds.rules | sony 계열 HID 드라이버가 있을 때만 의미 있음 |
+| udev | DS4 라이트바 90-ds4-leds.rules, 패드 연결 감시 91-ds4-hidraw.rules | 라이트바는 sony 계열 HID 드라이버가 있을 때만 의미 있음. 연결 감시는 패드가 끊기면 0.5초 안에 차를 세우는 데 필요 |
 | uv | 설치 후 `uv venv --system-site-packages --python /usr/bin/python3` → `uv sync` | JetPack 의 tensorrt·cuda 가 venv 안에서 보이게. evdev 는 기본 의존성(리눅스 마커)이라 `uv run` 만 해도 유지된다. torch/PySide6 는 받지 않음 |
 
 `verify` 는 위 항목에 더해 `i2cdetect -y -r 7` 로 0x40(서보용)과 0x41(모터용)이 모두 응답하는지 본다. 0x70 이 함께 보이는 것은
@@ -101,14 +101,14 @@ Jetson 의 3.3 V 신호는 MAX7219 규격(HIGH 3.5 V)보다 조금 낮지만 202
 uv run python scripts/dotmatrix_test.py          # 무늬 10개
 uv run python scripts/dotmatrix_test.py status   # 수집기가 그리는 상태 화면 4가지
 ```
-화살표가 돌아가 보이면 `config.yaml` 의 `display.rotate`(90/180/270) 또는 `flip` 을 바꾼다. 모듈이 없으면 수집기가 경고만 남기고
+무늬가 돌아가 보이면 `config.yaml` 의 `display.rotate`(90/180/270) 또는 `flip` 을 바꾼다. 모듈이 없으면 수집기가 경고만 남기고
 표시 없이 주행한다 (`display.enabled: false` 로 끌 수도 있다).
 
 ## 수동 절차 (스크립트가 실패했을 때)
 
 ### 그룹
 ```bash
-sudo usermod -aG i2c,input,bluetooth,video $USER    # 재로그인 필요
+sudo usermod -aG i2c,input,bluetooth,video,gpio $USER    # 재로그인 필요
 ```
 
 ### DualShock 4 (CUH-ZCT2G) 페어링
@@ -126,7 +126,7 @@ bluetoothctl
 걸어오는 연결을 받아 동작한다(`ClassicBondedOnly=false` 가 전제). 반대로 `[NEW] Device` 가 60초 넘게 안 뜨면 패드가
 페어링 모드가 아니다: 라이트바가 빠르게 두 번씩 깜빡여야 하고, 느리게 깜빡이면 PS 를 10초 눌러 끈 뒤 Share+PS 를 다시 누른다.
 
-**JetPack 6.2.1 커널에는 hid-sony / hid-playstation 드라이버가 없다.** 패드는 generic HID 로 붙어 스틱·버튼·트리거는 동작하지만 **라이트바와 진동은 쓸 수 없다.** 코드는 드라이버를 감지해 자동으로 generic 레이아웃을 쓰고, 상태 표시는 터미널 상태줄로 한다. 매핑이 다르면 `uv run python -m common.inputs.ds4` 로 코드를 확인하고 `config.yaml` 의 `input.ds4.codes` 에 적는다.
+**JetPack 6.2.1 커널에는 hid-sony / hid-playstation 드라이버가 없다.** 패드는 generic HID 로 붙어 스틱·버튼·트리거는 동작하지만 **라이트바와 진동은 쓸 수 없다.** 코드는 드라이버를 감지해 자동으로 generic 레이아웃을 쓰고, 상태는 터미널 상태줄과 도트 매트릭스로 보여 준다. 매핑이 다르면 `uv run python -m common.inputs.ds4` 로 코드를 확인하고 `config.yaml` 의 `input.ds4.codes` 에 적는다.
 
 ## 주행 중 SSH 가 끊겨도 계속 달린다
 

@@ -46,7 +46,7 @@ Jetson 40핀 헤더에서 쓰는 핀: 1 (3.3 V), 3 (SDA), 5 (SCL), 6 (GND) → P
 
 ## 3. 학생 보드 준비 (골든 이미지)
 
-교수가 기준 보드 한 대를 완성한 뒤 SD 카드를 통째로 복제한다. 학생은 **설치 과정 없이** 보드를 켜고 자기 패드만 페어링한다.
+교수님이 기준 보드 한 대를 완성한 뒤 SD 카드를 통째로 복제한다. 학생은 **설치 과정 없이** 보드를 켜고 자기 패드만 페어링한다.
 
 ```bash
 cd ~/course-autodrive
@@ -55,7 +55,7 @@ bash scripts/jetson_setup.sh verify     # 점검: I2C 의 PCA9685 두 장, SPI, 
 git pull && uv sync                     # 코드 갱신 (필요할 때)
 ```
 
-기준 보드를 만들 때(교수): `bash scripts/jetson_setup.sh install` (패키지, i2c/input/gpio 그룹, bluez 설정, uv 가상환경, SPI1 켜기 → 재부팅) → `verify` → `prepare-image` → 카드 복제. 상세: `docs/jetson-setup.md`.
+기준 보드를 만들 때(교수님): `bash scripts/jetson_setup.sh install` (패키지, i2c/input/gpio 그룹, bluez 설정, uv 가상환경, SPI1 켜기 → 재부팅) → `verify` → `prepare-image` → 카드 복제. 상세: `docs/jetson-setup.md`.
 
 PC 쪽 접속: Wi-Fi 같은 공유기, SSH (`ssh gsc@<IP>`), 파일 전송은 `scp`. 의존성 관리는 `uv` (`pyproject.toml` + `uv.lock`), `pip install` 은 쓰지 않는다.
 
