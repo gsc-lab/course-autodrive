@@ -43,12 +43,18 @@ def test_window_opens_navigates_excludes_and_builds(qapp, tmp_path):
         win.goto(5); assert win.index == 5
         win.goto(99); assert win.index == 11                                # 끝에서 멈춤
         win.goto(-3); assert win.index == 0
-        win.goto(6); win.mark_range_start(); win.goto(8); win.mark_range_end()
-        assert win._range() == (6, 8)
+        win.goto(6); win.goto(8, extend=True)                               # Shift+→ 두 번: 6~8 연속 선택
+        assert win.selected == {6, 7, 8} and win.timeline.selected == [(6, 8)]
+        win.goto(7, extend=True); assert win.selected == {6, 7}             # 되돌아오면 줄어든다
+        win.goto(8, extend=True)
         win.exclude_selection()
-        assert sum(win.ws.counts()[1].values()) == 5 and win._range() == (None, None)
+        assert sum(win.ws.counts()[1].values()) == 5 and win.selected == set()
         win.undo()
         assert sum(win.ws.counts()[1].values()) == 2
+        win.goto(5); win.toggle_select(9); win.toggle_select(11)            # Ctrl+클릭: 떨어진 낱장
+        assert win.selected == {5, 9, 11} and win.timeline.selected == [(5, 5), (9, 9), (11, 11)]
+        win.toggle_select(9); assert win.selected == {5, 11}
+        win.goto(4); assert win.selected == set()                           # 그냥 이동하면 선택 해제
         win.goto(0); win.toggle_current(); assert win.ws.is_excluded(win.frames[0])
         assert (d / "curation.json").exists()                               # 바뀔 때마다 저장
         assert [a for a, _, _ in win.chart.data] == [30, 60, 90, 120, 150]

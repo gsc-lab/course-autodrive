@@ -4,7 +4,8 @@
 
 화면: 머리띠(로고·제목) → 도구 막대 → [사진 + 조향 화살표 | 옆 패널(세션, 구간 선택, 클래스 분포, 현재 프레임)]
       → 타임라인(세션 경계·제외·구간·현재 위치를 한 줄에) → 필름스트립.
-용어: 세션 = 수집기를 한 번 실행해 생긴 폴더(파일로 남는다). 구간 = 한꺼번에 제외/복구하려고 [ ] 로 잡는 임시 선택(저장 안 됨).
+용어: 세션 = 수집기를 한 번 실행해 생긴 폴더(파일로 남는다). 선택 = 한꺼번에 제외/복구하려고 고른 사진들(임시, 저장 안 됨).
+선택은 탐색기와 같다: Shift+←/→ 또는 Shift+클릭 = 연속, Ctrl+클릭 = 떨어진 낱장, Esc = 해제.
 제외 상태는 바뀔 때마다 세션 옆 curation.json 에 저장된다. 원본 사진은 건드리지 않는다. 단축키는 F1.
 """
 from __future__ import annotations
@@ -77,8 +78,10 @@ QToolTip {{ background: #0b0d11; color: {C_TEXT}; border: 1px solid {C_BORDER}; 
 SHORTCUTS = [
     ("이동", [("←  /  →", "한 장 앞뒤"), ("PageUp / PageDown", "10장 앞뒤"), ("Home / End", "처음 / 끝"),
             ("Space", "자동 재생 · 정지"), ("타임라인 클릭·끌기", "그 위치로 이동")]),
-    ("구간 선택", [("[", "구간 시작점"), ("]", "구간 끝점"), ("Esc", "구간 해제")]),
-    ("제외 · 복구", [("Delete", "구간(없으면 현재 장) 제외"), ("Insert", "구간(없으면 현재 장) 복구"),
+    ("선택", [("Shift + ← / →", "연속으로 선택 넓히기 (PageUp/Down, Home/End 도 가능)"),
+            ("Shift + 클릭", "현재 장부터 클릭한 장까지 연속 선택"), ("Ctrl + 클릭", "떨어진 사진을 낱장으로 선택·해제"),
+            ("Ctrl+A", "전체 선택"), ("Esc", "선택 해제")]),
+    ("제외 · 복구", [("Delete", "선택한 사진(없으면 현재 장) 제외"), ("Insert", "선택한 사진(없으면 현재 장) 복구"),
                  ("X", "현재 장 제외/복구 토글"), ("Ctrl+Z", "되돌리기")]),
     ("파일", [("Ctrl+O", "세션 폴더 열기"), ("Ctrl+Shift+O", "세션 zip 열기"), ("Ctrl+S", "지금 저장 (평소엔 자동 저장)"),
             ("Ctrl+B", "데이터셋 zip 만들기"), ("F1", "이 도움말")]),
@@ -220,23 +223,21 @@ class BarChart(QWidget):
 # 타임라인: 전체 프레임을 한 줄로. 세션 경계, 제외(빨강), 구간(파랑), 현재 위치(노랑)
 # ---------------------------------------------------------------------------
 class Timeline(QWidget):
-    seek = Signal(int)
+    seek = Signal(int, bool)        # (프레임 번호, Shift 를 누른 채인지)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.n = 0
         self.sessions: List[Tuple[str, int, int, str]] = []    # (이름, 시작, 끝, 색)
         self.excluded: List[Tuple[int, int]] = []
-        self.range: Tuple[Optional[int], Optional[int]] = (None, None)
-        self.pending_start: Optional[int] = None
+        self.selected: List[Tuple[int, int]] = []
         self.cursor = 0
         self.setFixedHeight(58)
         self.setCursor(Qt.PointingHandCursor)
-        self.setToolTip("전체 프레임 한눈에 보기 — 위: 세션, 빨강: 제외, 파랑: 선택한 구간, 노랑: 현재 위치. 클릭하면 이동")
+        self.setToolTip("전체 프레임 한눈에 보기 — 위: 세션, 빨강: 제외, 파랑: 선택한 사진, 노랑: 현재 위치. 클릭하면 이동 (Shift+클릭은 연속 선택)")
 
-    def set_state(self, n, sessions, excluded, rng, pending_start, cursor) -> None:
-        self.n, self.sessions, self.excluded, self.range = n, sessions, excluded, rng
-        self.pending_start, self.cursor = pending_start, cursor
+    def set_state(self, n, sessions, excluded, selected, cursor) -> None:
+        self.n, self.sessions, self.excluded, self.selected, self.cursor = n, sessions, excluded, selected, cursor
         self.update()
 
     def _x(self, i: float) -> float:
@@ -265,31 +266,26 @@ class Timeline(QWidget):
         p.setPen(Qt.NoPen); p.setBrush(QColor(C_DANGER))
         for a, b in self.excluded:
             p.drawRect(QRectF(self._x(a), track_y + 6, max(1.5, self._x(b + 1) - self._x(a)), track_h - 12))
-        lo, hi = self.range
-        if lo is not None:
-            c = QColor(C_ACCENT); c.setAlpha(110)
-            p.setBrush(c); p.setPen(QPen(QColor("#9cc2ff"), 1.5))
+        c = QColor(C_ACCENT); c.setAlpha(110)
+        p.setBrush(c); p.setPen(QPen(QColor("#9cc2ff"), 1.5))
+        for lo, hi in self.selected:
             p.drawRect(QRectF(self._x(lo), track_y - 2, max(3.0, self._x(hi + 1) - self._x(lo)), track_h + 4))
-        elif self.pending_start is not None:
-            p.setPen(QPen(QColor("#9cc2ff"), 2, Qt.DashLine))
-            xs = self._x(self.pending_start)
-            p.drawLine(QPointF(xs, track_y - 2), QPointF(xs, track_y + track_h + 2))
         xc = self._x(self.cursor + 0.5)
         p.setPen(QPen(QColor(C_AMBER), 2)); p.drawLine(QPointF(xc, track_y - 4), QPointF(xc, track_y + track_h + 4))
         p.setBrush(QColor(C_AMBER)); p.setPen(Qt.NoPen)
         p.drawPolygon(QPolygonF([QPointF(xc - 5, track_y - 6), QPointF(xc + 5, track_y - 6), QPointF(xc, track_y)]))
 
-    def _seek_at(self, x: float) -> None:
+    def _seek_at(self, x: float, shift: bool) -> None:
         if self.n:
             i = int((x - 10) / max(1, self.width() - 20) * self.n)
-            self.seek.emit(max(0, min(self.n - 1, i)))
+            self.seek.emit(max(0, min(self.n - 1, i)), shift)
 
     def mousePressEvent(self, e) -> None:  # noqa: N802
-        self._seek_at(e.position().x())
+        self._seek_at(e.position().x(), bool(e.modifiers() & Qt.ShiftModifier))
 
     def mouseMoveEvent(self, e) -> None:  # noqa: N802
         if e.buttons() & Qt.LeftButton:
-            self._seek_at(e.position().x())
+            self._seek_at(e.position().x(), bool(e.modifiers() & Qt.ShiftModifier))
 
 
 # ---------------------------------------------------------------------------
@@ -365,8 +361,8 @@ class MainWindow(QMainWindow):
         self.ws = Workspace(cfg)
         self.frames: List[Frame] = []
         self.index = 0
-        self.range_start: Optional[int] = None
-        self.range_end: Optional[int] = None
+        self.selected: set = set()                          # 선택한 프레임 번호 (임시, 저장 안 됨)
+        self.anchor = 0                                     # Shift 연속 선택의 기준점
         self._history: List[List[str]] = []                 # 되돌리기 순서: 한 번의 조작이 건드린 세션들
         self._thumbs: Dict[int, QPixmap] = {}
         self._flag_state: List[Optional[Tuple[bool, bool]]] = []
@@ -428,11 +424,8 @@ class MainWindow(QMainWindow):
             sep = QFrame(); sep.setFrameShape(QFrame.VLine); sep.setStyleSheet(f"color:{C_BORDER};"); bl.addWidget(sep)
         group("세션", [self._btn("폴더 열기", "세션 폴더 열기 (Ctrl+O). 여러 번 열면 세션이 추가된다", self.open_folder_dialog),
                      self._btn("zip 열기", "세션 zip 열기 (Ctrl+Shift+O)", self.open_zip_dialog)])
-        group("구간 선택", [self._btn("[ 시작", "현재 장을 구간 시작점으로 ( [ )", self.mark_range_start),
-                        self._btn("끝 ]", "현재 장을 구간 끝점으로 ( ] )", self.mark_range_end),
-                        self._btn("해제", "구간 선택 해제 (Esc)", self.clear_range)])
-        group("제외 · 복구", [self._btn("제외", "구간(없으면 현재 장)을 데이터셋에서 제외 (Delete)", self.exclude_selection, "danger"),
-                          self._btn("복구", "구간(없으면 현재 장)을 다시 포함 (Insert)", self.restore_selection),
+        group("제외 · 복구", [self._btn("제외", "선택한 사진(없으면 현재 장)을 데이터셋에서 제외 (Delete)", self.exclude_selection, "danger"),
+                          self._btn("복구", "선택한 사진(없으면 현재 장)을 다시 포함 (Insert)", self.restore_selection),
                           self._btn("되돌리기", "마지막 제외/복구 되돌리기 (Ctrl+Z)", self.undo)])
         self.play_btn = self._btn("▶ 재생", "자동 재생 · 정지 (Space)", self.toggle_play)
         group("보기", [self.play_btn])
@@ -452,7 +445,7 @@ class MainWindow(QMainWindow):
         self.sessions_list.itemClicked.connect(self._on_session_clicked)
         lay.addWidget(self.sessions_list); sl.addWidget(c)
 
-        c, lay = card("구간 선택", "한꺼번에 제외·복구하려고 잡는 연속된 사진 묶음. 임시 선택이라 저장되지 않는다.")
+        c, lay = card("선택", "한꺼번에 제외·복구할 사진들. 임시 선택이라 저장되지 않는다.")
         self.range_label = QLabel(); self.range_label.setObjectName("value"); self.range_label.setWordWrap(True)
         lay.addWidget(self.range_label); sl.addWidget(c)
 
@@ -473,14 +466,14 @@ class MainWindow(QMainWindow):
         mid.addWidget(self.view, 1); mid.addWidget(side)
 
         # 아래: 타임라인 + 필름스트립
-        self.timeline = Timeline(); self.timeline.seek.connect(self.goto)
+        self.timeline = Timeline(); self.timeline.seek.connect(lambda i, shift: self.goto(i, extend=shift))
         self.strip = QListWidget(); self.strip.setObjectName("strip")
         self.strip.setFlow(QListWidget.LeftToRight); self.strip.setViewMode(QListWidget.IconMode)
         self.strip.setWrapping(False); self.strip.setMovement(QListWidget.Static); self.strip.setFocusPolicy(Qt.NoFocus)
         px = self.cfg.curator.thumb_px
         self.strip.setIconSize(QSize(px, int(px * 0.75))); self.strip.setFixedHeight(int(px * 0.75) + 54); self.strip.setUniformItemSizes(True)
         self.strip.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.strip.currentRowChanged.connect(self._on_strip_row)
+        self.strip.itemClicked.connect(self._on_strip_clicked)
 
         central = QWidget()
         cl = QVBoxLayout(central); cl.setContentsMargins(0, 0, 0, 0); cl.setSpacing(0)
@@ -493,11 +486,14 @@ class MainWindow(QMainWindow):
                         ("Ctrl+B", self.build_dataset_dialog), ("Delete", self.exclude_selection),
                         ("Insert", self.restore_selection), ("X", self.toggle_current), ("Ctrl+Z", self.undo),
                         ("Space", self.toggle_play), ("F1", self.show_shortcuts),
-                        ("Left", lambda: self.goto(self.index - 1)), ("Right", lambda: self.goto(self.index + 1)),
-                        ("PgUp", lambda: self.goto(self.index - 10)), ("PgDown", lambda: self.goto(self.index + 10)),
-                        ("Home", lambda: self.goto(0)), ("End", lambda: self.goto(len(self.frames) - 1)),
-                        ("[", self.mark_range_start), ("]", self.mark_range_end), ("Escape", self.clear_range)):
+                        ("Ctrl+A", self.select_all), ("Escape", self.clear_selection)):
             a = QAction(self); a.setShortcut(QKeySequence(key)); a.triggered.connect(fn); self.addAction(a)
+        moves = (("Left", lambda: self.index - 1), ("Right", lambda: self.index + 1), ("PgUp", lambda: self.index - 10),
+                 ("PgDown", lambda: self.index + 10), ("Home", lambda: 0), ("End", lambda: len(self.frames) - 1))
+        for key, target in moves:                       # 그냥 누르면 이동, Shift 와 함께면 연속 선택
+            for prefix, extend in (("", False), ("Shift+", True)):
+                a = QAction(self); a.setShortcut(QKeySequence(prefix + key))
+                a.triggered.connect(lambda _=False, t=target, e=extend: self.goto(t(), extend=e)); self.addAction(a)
 
     def show_shortcuts(self) -> None:
         ShortcutDialog(self).exec()
@@ -538,7 +534,7 @@ class MainWindow(QMainWindow):
     def _refresh_all(self) -> None:
         self.frames = self.ws.frames()
         self.index = min(self.index, max(0, len(self.frames) - 1))
-        self.range_start = self.range_end = None
+        self.selected = set(); self.anchor = self.index
         self._session_span = {}
         for i, f in enumerate(self.frames):
             a, _ = self._session_span.get(f.session, (i, i))
@@ -625,8 +621,7 @@ class MainWindow(QMainWindow):
         it = self.strip.item(i)
         if it is None:
             return
-        lo, hi = self._range()
-        state = (self.ws.is_excluded(self.frames[i]), lo is not None and lo <= i <= hi)
+        state = (self.ws.is_excluded(self.frames[i]), i in self.selected)
         if self._flag_state[i] == state:
             return
         self._flag_state[i] = state
@@ -640,8 +635,8 @@ class MainWindow(QMainWindow):
     def _refresh_timeline(self) -> None:
         sessions = [(name, a, b, self._session_color(name)) for name, (a, b) in sorted(self._session_span.items())]
         excluded = runs([self.ws.is_excluded(f) for f in self.frames])
-        self.timeline.set_state(len(self.frames), sessions, excluded, self._range(),
-                                self.range_start if self.range_end is None else None, self.index)
+        self.timeline.set_state(len(self.frames), sessions, excluded,
+                                runs([i in self.selected for i in range(len(self.frames))]), self.index)
 
     def _show_current(self) -> None:
         self._refresh_timeline()
@@ -680,17 +675,19 @@ class MainWindow(QMainWindow):
         self.strip.blockSignals(False)
 
     def _refresh_range_label(self) -> None:
-        lo, hi = self._range()
-        if lo is not None:
-            sess = sorted({f.session for f in self.frames[lo:hi + 1]})
+        n = len(self.selected)
+        if n:
+            groups = runs([i in self.selected for i in range(len(self.frames))])
+            where = (f"{groups[0][0] + 1} ~ {groups[0][1] + 1}번" if len(groups) == 1 and n > 1
+                     else (f"{groups[0][0] + 1}번" if n == 1 else f"떨어진 {len(groups)}곳"))
+            sess = {self.frames[i].session for i in self.selected}
             span = f" · 세션 {len(sess)}개에 걸침" if len(sess) > 1 else ""
-            self.range_label.setText(f"<b style='color:#9cc2ff'>{lo + 1} ~ {hi + 1}번</b> &nbsp;({hi - lo + 1}장{span})<br>"
+            self.range_label.setText(f"<b style='color:#9cc2ff'>{n}장 선택</b> &nbsp;({where}{span})<br>"
                                      f"<span style='color:{C_MUTED}'>Delete 로 제외, Insert 로 복구, Esc 로 해제</span>")
-        elif self.range_start is not None:
-            self.range_label.setText(f"시작 <b style='color:#9cc2ff'>{self.range_start + 1}번</b> — 끝으로 이동한 뒤 <b>]</b>")
         else:
-            self.range_label.setText(f"<span style='color:{C_MUTED}'>선택 없음 — 시작 사진에서 <b>[</b>, 끝 사진에서 <b>]</b><br>"
-                                     "선택이 없으면 제외·복구는 현재 한 장에만 적용</span>")
+            self.range_label.setText(f"<span style='color:{C_MUTED}'>선택 없음 — 제외·복구는 현재 한 장에 적용<br>"
+                                     "<b>Shift+←/→</b> 또는 <b>Shift+클릭</b>: 연속 선택<br>"
+                                     "<b>Ctrl+클릭</b>: 떨어진 낱장 선택</span>")
 
     def _refresh_counts(self) -> None:
         inc, exc = self.ws.counts()
@@ -701,16 +698,46 @@ class MainWindow(QMainWindow):
                                  f" &nbsp;·&nbsp; 전체 {ti + te}장")
 
     # -- 이동 ------------------------------------------------------------
-    def goto(self, i: int) -> None:
+    def goto(self, i: int, extend: bool = False) -> None:
+        """i 번 사진으로 이동. extend(Shift) 면 기준점부터 거기까지 연속 선택, 아니면 선택을 지우고 기준점을 옮긴다."""
         if not self.frames:
             return
         self.index = max(0, min(len(self.frames) - 1, i))
+        if extend:
+            lo, hi = min(self.anchor, self.index), max(self.anchor, self.index)
+            self.selected = set(range(lo, hi + 1))
+        else:
+            self.selected = set()
+            self.anchor = self.index
+        self._paint_strip_flags()
         self._show_current()
 
-    def _on_strip_row(self, row: int) -> None:
-        if 0 <= row < len(self.frames):
-            self.index = row
-            self._show_current()
+    def toggle_select(self, i: int) -> None:
+        """Ctrl+클릭: i 번 사진만 선택에 넣거나 뺀다 (떨어진 낱장 선택)."""
+        if not (0 <= i < len(self.frames)):
+            return
+        if not self.selected and self.index != i:
+            self.selected.add(self.index)               # 탐색기처럼: 지금 보던 사진도 선택에 포함해 시작
+        self.selected.symmetric_difference_update({i})
+        self.index = self.anchor = i
+        self._paint_strip_flags()
+        self._show_current()
+
+    def select_all(self) -> None:
+        self.selected = set(range(len(self.frames)))
+        self._paint_strip_flags(); self._show_current()
+
+    def clear_selection(self) -> None:
+        self.selected = set(); self.anchor = self.index
+        self._paint_strip_flags(); self._show_current()
+
+    def _on_strip_clicked(self, item: QListWidgetItem) -> None:
+        row = self.strip.row(item)
+        mods = QApplication.keyboardModifiers()
+        if mods & Qt.ControlModifier:
+            self.toggle_select(row)
+        else:
+            self.goto(row, extend=bool(mods & Qt.ShiftModifier))
 
     def toggle_play(self) -> None:
         if self._play.isActive():
@@ -724,35 +751,11 @@ class MainWindow(QMainWindow):
         else:
             self.goto(self.index + 1)
 
-    # -- 구간·제외 -----------------------------------------------------------
-    def _range(self):
-        if self.range_start is None or self.range_end is None:
-            return None, None
-        return min(self.range_start, self.range_end), max(self.range_start, self.range_end)
-
-    def mark_range_start(self) -> None:
-        if not self.frames:
-            return
-        self.range_start, self.range_end = self.index, None
-        self._paint_strip_flags(); self._show_current()
-
-    def mark_range_end(self) -> None:
-        if not self.frames:
-            return
-        if self.range_start is None:
-            self.range_start = self.index
-        self.range_end = self.index
-        self._paint_strip_flags(); self._show_current()
-
-    def clear_range(self) -> None:
-        self.range_start = self.range_end = None
-        self._paint_strip_flags(); self._show_current()
-
+    # -- 제외·복구 ---------------------------------------------------------
     def _selection(self) -> List[Frame]:
-        lo, hi = self._range()
-        if lo is None:
-            return [self.frames[self.index]] if self.frames else []
-        return self.frames[lo:hi + 1]
+        if self.selected:
+            return [self.frames[i] for i in sorted(self.selected)]
+        return [self.frames[self.index]] if self.frames else []
 
     def _after_change(self, msg: str) -> None:
         self.ws.save()                                  # 바뀔 때마다 저장: 원본이 아니라 curation.json 만
@@ -776,7 +779,7 @@ class MainWindow(QMainWindow):
         if not sel:
             return
         self._change(sel, True)
-        self.range_start = self.range_end = None
+        self.selected = set(); self.anchor = self.index
         self._after_change(f"{len(sel)}장 제외")
 
     def restore_selection(self) -> None:
@@ -784,7 +787,7 @@ class MainWindow(QMainWindow):
         if not sel:
             return
         self._change(sel, False)
-        self.range_start = self.range_end = None
+        self.selected = set(); self.anchor = self.index
         self._after_change(f"{len(sel)}장 복구")
 
     def toggle_current(self) -> None:
