@@ -3,7 +3,7 @@
 배선: 모듈 VCC → 핀 2 (5 V), GND → 핀 20, DIN → 핀 19, CS → 핀 24, CLK → 핀 23. SPI1 은 jetson_setup.sh install 이 켠다.
 
   uv run python scripts/dotmatrix_test.py              무늬 10개를 1초씩 (전체 켜기, 끄기, 화살표 4방향, 사각형, X, 테두리, 체크)
-  uv run python scripts/dotmatrix_test.py status       수집기가 그리는 상태 화면을 차례로 (정지 → 전진 3단계 → 후진 → 조향 좌우 → 녹화 → 오류)
+  uv run python scripts/dotmatrix_test.py status       수집기가 그리는 상태 화면을 차례로 (○ 대기 → ● 촬영 중 → □ 번쩍임 → X 오류)
   uv run python scripts/dotmatrix_test.py stress [초]  무늬를 0.1초마다 계속 바꾼다 (기본 120초). 깨지는 점이 보이면 직결이 불안한 것
   uv run python scripts/dotmatrix_test.py off          화면 끄기
 """
@@ -42,20 +42,14 @@ def main(argv) -> int:
         if mode == "off":
             print("끔"); return 0
         if mode == "status":
-            lo, hi = 30, 150
-            scenes = [("정지", DisplayState(0, None, 90, lo, hi)),
-                      ("전진 30 %", DisplayState(30, "forward", 90, lo, hi)),
-                      ("전진 45 %", DisplayState(45, "forward", 90, lo, hi)),
-                      ("전진 60 %", DisplayState(60, "forward", 90, lo, hi)),
-                      ("후진 30 %", DisplayState(30, "backward", 90, lo, hi)),
-                      ("좌회전", DisplayState(45, "forward", 30, lo, hi)),
-                      ("우회전", DisplayState(45, "forward", 150, lo, hi)),
-                      ("녹화 중 (모서리 점멸)", DisplayState(45, "forward", 90, lo, hi, recording=True)),
-                      ("오류 (X 점멸)", DisplayState(0, None, 90, lo, hi, error=True))]
+            scenes = [("패드 연결, 촬영 안 함 (○ 고정)", DisplayState()),
+                      ("촬영 중 (● ↔ ○ 번갈아)", DisplayState(recording=True)),
+                      ("□ 불량 표시 (전체 켜짐)", DisplayState(recording=True, flash=True)),
+                      ("패드 끊김·오류 (X 빠른 깜빡임)", DisplayState(error=True))]
             for name, st in scenes:
                 print(f">>> {name}", flush=True)
                 t0 = time.monotonic()
-                while time.monotonic() - t0 < 2.0:
+                while time.monotonic() - t0 < 4.0:
                     d.update(st, time.monotonic()); time.sleep(0.05)
             return 0
         if mode == "stress":

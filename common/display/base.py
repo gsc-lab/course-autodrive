@@ -2,18 +2,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
 class DisplayState:
-    speed: int                  # 듀티 % (0 = 정지)
-    direction: Optional[str]    # "forward" | "backward" | None
-    angle: int                  # 현재 조향 각도
-    angle_min: int              # steering.min
-    angle_max: int              # steering.max
-    recording: bool = False
-    error: bool = False
+    recording: bool = False     # 촬영(녹화) 중
+    error: bool = False         # 패드 끊김·카메라 끊김 등으로 멈춘 상태
+    flash: bool = False         # □ 불량 표시를 누른 직후 잠깐 True (화면 전체가 한 번 번쩍인다)
 
 
 class Display:
@@ -22,8 +17,8 @@ class Display:
     def update(self, st: DisplayState, now: float) -> None:
         raise NotImplementedError
 
-    def close(self) -> None:
-        pass
+    def close(self, keep_error: bool = False) -> None:
+        """keep_error 면 화면을 끄지 않고 X 를 켜 둔 채 닫는다 (왜 멈췄는지 프로그램이 끝난 뒤에도 보이게)."""
 
 
 class NullDisplay(Display):

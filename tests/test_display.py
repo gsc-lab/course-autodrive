@@ -4,30 +4,24 @@ import pytest
 from common.config import DEFAULT_CONFIG_PATH, ConfigError, load_config
 from common.display import NullDisplay, create_display
 from common.display.base import DisplayState
-from common.display.glyphs import ARROW_DOWN, ARROW_UP, CROSS, SQUARE, flip_horizontal, render, rotate, speed_row, steering_row
+from common.display.glyphs import BLANK, CROSS, DISC, FULL, RING, flip_horizontal, render, rotate
 
 
 def _st(**kw):
-    base = dict(speed=0, direction=None, angle=90, angle_min=30, angle_max=150, recording=False, error=False)
-    base.update(kw)
-    return DisplayState(**base)
+    return DisplayState(**kw)
 
 
-def test_direction_glyphs_and_bars():
-    assert render(_st(), True)[:5] == SQUARE
-    assert render(_st(speed=45, direction="forward"), True)[:5] == ARROW_UP
-    assert render(_st(speed=30, direction="backward"), True)[:5] == ARROW_DOWN
-    assert render(_st(), True)[5] == 0                                   # 빈 줄
-    assert speed_row(0) == 0 and speed_row(100) == 0xFF and speed_row(50) == 0xF0
-    assert steering_row(90, 30, 150) == 0x18                             # 직진 = 가운데 두 칸
-    assert steering_row(30, 30, 150) == 0xC0 and steering_row(150, 30, 150) == 0x03
-    assert render(_st(speed=60, direction="forward"), True)[7] == speed_row(60)
+def test_idle_shows_ring_and_recording_alternates_disc_and_ring():
+    assert render(_st(), True) == RING and render(_st(), False) == RING           # 대기: 고정
+    assert render(_st(recording=True), True) == DISC
+    assert render(_st(recording=True), False) == RING                             # 꺼지는 순간이 없다
+    assert all(d & r == r for d, r in zip(DISC, RING))                            # 테두리는 두 화면에 공통
 
 
-def test_recording_blinks_corners_and_error_blinks_cross():
-    on, off = render(_st(recording=True), True), render(_st(recording=True), False)
-    assert on[0] & 0x81 == 0x81 and off[0] & 0x81 == 0
-    assert render(_st(error=True), True) == CROSS and render(_st(error=True), False) == [0] * 8
+def test_error_blinks_cross_fast_and_mark_flashes_full():
+    assert render(_st(error=True), True, True) == CROSS and render(_st(error=True), True, False) == BLANK
+    assert render(_st(recording=True, flash=True), False) == FULL
+    assert render(_st(error=True, flash=True, recording=True), True, True) == CROSS   # 오류가 가장 우선
 
 
 def test_rotate_and_flip():
@@ -36,7 +30,7 @@ def test_rotate_and_flip():
     assert rotate(rows, 90) == [0x01] + [0] * 7    # 시계 90°: 오른쪽 위
     assert rotate(rows, 180) == [0] * 7 + [0x01]   # 오른쪽 아래
     assert rotate(rows, 270) == [0] * 7 + [0x80]   # 왼쪽 아래
-    assert rotate(rotate(ARROW_UP + [0] * 3, 90), 270) == ARROW_UP + [0] * 3
+    assert rotate(rotate(CROSS, 90), 270) == CROSS and rotate(RING, 90) == RING
     assert flip_horizontal([0b10000001, 0b11000000]) == [0b10000001, 0b00000011]
 
 
@@ -59,14 +53,28 @@ def test_max7219_display_writes_only_changed_frames():
     init = [w[0] for w in dev.writes]
     assert m.DISPLAYTEST in init and m.SHUTDOWN in init and dev.writes[init.index(m.INTENSITY)][1] == 5
     n0 = len(dev.writes)
-    d.update(_st(speed=45, direction="forward"), now=0.0)
-    assert len(dev.writes) == n0 + 8 and dev.writes[n0] == bytes([1, ARROW_UP[0]])
-    d.update(_st(speed=45, direction="forward"), now=0.1)     # 같은 프레임이면 다시 쓰지 않는다
+    d.update(_st(), now=0.0)
+    assert len(dev.writes) == n0 + 8 and dev.writes[n0] == bytes([1, RING[0]])
+    d.update(_st(), now=0.1)                                  # 같은 프레임이면 다시 쓰지 않는다
     assert len(dev.writes) == n0 + 8
-    d.update(_st(speed=45, direction="forward", recording=True), now=0.0)   # 깜빡임 on 단계: 모서리 켜짐
-    assert dev.writes[-8][1] & 0x81 == 0x81
+    d.update(_st(recording=True), now=0.0)                    # 깜빡임 on 단계: 꽉 찬 원
+    assert [w[1] for w in dev.writes[-8:]] == DISC
+    d.update(_st(recording=True), now=0.25)                   # off 단계(2 Hz): 빈 원으로 돌아온다
+    assert [w[1] for w in dev.writes[-8:]] == RING
+    d.update(_st(error=True), now=0.0); assert [w[1] for w in dev.writes[-8:]] == CROSS
+    d.update(_st(error=True), now=0.125); assert [w[1] for w in dev.writes[-8:]] == BLANK   # 4 Hz 깜빡임
     d.close()
     assert dev.closed and dev.writes[-1] == bytes([m.SHUTDOWN, 0])
+
+
+def test_max7219_keeps_cross_on_screen_when_closed_after_an_error():
+    from common.display import max7219 as m
+    dev = FakeSpi()
+    d = m.Max7219Display("/dev/null", intensity=5, rotate_deg=90, flip=False, blink_hz=2.0, dev=dev)
+    d.update(_st(recording=True), now=0.0)
+    d.close(keep_error=True)
+    assert dev.closed and [w[1] for w in dev.writes[-8:]] == CROSS      # 끄지 않고 X 를 남긴다
+    assert bytes([m.SHUTDOWN, 0]) not in dev.writes
 
 
 def test_create_display_falls_back_to_null(tmp_path):

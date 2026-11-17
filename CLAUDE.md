@@ -114,6 +114,9 @@ Hard rules that come from the hardware:
   changes without a glitch, so no level shifter. The display is optional: `create_display` returns `NullDisplay`
   when `display.enabled` is false, the device is missing or the open fails, and the collector keeps driving.
   `scripts/jetson_setup.sh install` enables spi1 (reboot needed); `scripts/dotmatrix_test.py status` previews the screens.
+  Since 2026-11-17 it shows only whole-screen states (user decision: nobody can read arrows/bars while driving): ring = pad
+  connected and idle, disc alternating with ring = recording, full flash = □ mark, X = stopped by pad loss/error (left lit
+  after exit via `Display.close(keep_error=True)`), dark = collector not running. Do not bring back direction/steering/speed.
 - Motor driver is Cytron MDD10A: one DIR line + PWM duty per channel (no IN1/IN2 pairs). Both channels receive the
   same PWM and DIR through WAGO splitters J4/J5, so the two rear motors always receive the same command.
 - Servo is powered by a 6 V UBEC, not by the Jetson. The Jetson has its own USB-PD power bank. The PCA9685 terminal

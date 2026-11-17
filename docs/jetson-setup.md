@@ -91,14 +91,15 @@ Jetson 의 3.3 V 신호는 MAX7219 규격(HIGH 3.5 V)보다 조금 낮지만 202
 
 | 화면 | 뜻 |
 |---|---|
-| 위 5행 ▲ / ▼ / ■ | 전진 / 후진 / 정지. 녹화 중이면 위 양 모서리 점이 깜빡인다 |
-| 7행 점 2개 | 조향 위치 (왼쪽 끝 = `steering.min`, 가운데 = 직진) |
-| 8행 막대 | 속도 (8칸 = 100 %) |
-| X 점멸 | 오류 (카메라 끊김 등) |
+| 꺼짐 | 수집기가 돌고 있지 않다 |
+| ○ 고정 | 패드 연결됨, 촬영 안 함 |
+| ● ↔ ○ 번갈아 | 촬영 중 |
+| 전체가 한 번 번쩍 | □ 불량 표시를 눌렀다 |
+| X | 패드 끊김·카메라 끊김 등으로 멈췄다. 수집기가 끝난 뒤에도 X 는 켜져 있고, 다음에 실행하면 지워진다 |
 
 ```bash
 uv run python scripts/dotmatrix_test.py          # 무늬 10개
-uv run python scripts/dotmatrix_test.py status   # 수집기가 그리는 상태 화면 9가지
+uv run python scripts/dotmatrix_test.py status   # 수집기가 그리는 상태 화면 4가지
 ```
 화살표가 돌아가 보이면 `config.yaml` 의 `display.rotate`(90/180/270) 또는 `flip` 을 바꾼다. 모듈이 없으면 수집기가 경고만 남기고
 표시 없이 주행한다 (`display.enabled: false` 로 끌 수도 있다).

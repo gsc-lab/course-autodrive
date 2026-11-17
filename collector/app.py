@@ -26,6 +26,7 @@ log = logging.getLogger("collector")
 
 LOOP_HZ = 50
 STATUS_HZ = 5
+MARK_FLASH_SEC = 0.3    # □ 를 누르면 도트 매트릭스 전체가 이만큼 켜진다
 WATCHDOG_SEC = 1.0      # 주 루프가 이보다 오래 멈추면 감시 스레드가 모터를 끈다 (PCA9685 는 스스로 멈추지 않는다)
 
 
@@ -109,7 +110,7 @@ class Collector:
         self.session: Optional[SessionWriter] = None
         self.input: Optional[InputDevice] = None
         steering = SteeringModel(cfg.steering)
-        self._steering_range = (steering.min, steering.max)
+        self._flash_until = 0.0            # □ 를 누른 뒤 도트 매트릭스를 번쩍이는 마감 시각
         try:
             # 터미널 모드를 바꾸는 입력 장치는 마지막에 연다 — 앞 단계가 실패해도 터미널이 망가지지 않게
             self.camera = create_camera(cfg.camera, mock=mock)
@@ -214,6 +215,7 @@ class Collector:
 
         if st.pending_mark:
             st.pending_mark = False
+            self._flash_until = now + MARK_FLASH_SEC
             s.mark(self.cfg.recording.mark_seconds, note=f"frame={s.last_frame_name or ''}")
         for n in st.notifications:
             self.input.notify(n)
@@ -237,16 +239,14 @@ class Collector:
         if now - self._status_last >= 1.0 / STATUS_HZ:
             self._status_last = now
             self.input.set_status(STATUS_ERROR if st.error else (STATUS_RECORDING if st.recording else STATUS_IDLE))
-            self._update_display(now)
             self._print_status()
+        self._update_display(now)           # 매 주기 (바뀐 화면만 전송된다). 깜빡임과 □ 번쩍임이 끊기지 않게
 
     def _update_display(self, now: float) -> None:
-        logic, st = self.logic, self.logic.state
+        st = self.logic.state
         try:
-            self.display.update(DisplayState(speed=logic.effective_speed, direction=logic.effective_direction,
-                                             angle=st.angle, angle_min=self._steering_range[0],
-                                             angle_max=self._steering_range[1], recording=st.recording,
-                                             error=bool(st.error)), now)
+            self.display.update(DisplayState(recording=st.recording, error=bool(st.error),
+                                             flash=now < self._flash_until), now)
         except OSError as e:                    # 표시 장치 통신 오류는 주행을 막지 않는다
             log.warning("상태 표시 오류, 표시를 끕니다: %s", e)
             self.display = __import__("common.display", fromlist=["NullDisplay"]).NullDisplay()
@@ -299,8 +299,10 @@ class Collector:
                       self.vehicle.close]
         if self.camera is not None:
             steps.append(self.camera.close)
-        if self.display is not None:
-            steps.append(self.display.close)
+        if self.display is not None:              # 패드 끊김·오류로 끝나면 X 를 켜 둔 채 닫는다
+            logic = getattr(self, "logic", None)
+            failed = bool(logic is not None and logic.state.error)
+            steps.append(lambda: self.display.close(keep_error=failed))
         if self.input is not None:
             steps.append(self.input.close)
         if self.session is not None:

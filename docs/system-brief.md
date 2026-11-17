@@ -34,7 +34,7 @@
 | 조향 서보 | LD-1501MG (500~2500 µs, 중립 1500 µs) | 앞바퀴 조향 |
 | 서보 전원 | Hobbywing UBEC 6 V | 주행 배터리 → 6 V |
 | 주행 배터리 | NiMH 7.2 V 1200 mAh + 10 A 퓨즈 | 모터·서보. **주전원 스위치 없음** (배터리 커넥터를 뽑는 것이 전원 차단) |
-| 상태 표시 | MAX7219 8×8 도트 매트릭스, Jetson SPI 직결 (선택) | 전진/후진/정지, 조향, 속도, 녹화, 오류 |
+| 상태 표시 | MAX7219 8×8 도트 매트릭스, Jetson SPI 직결 (선택) | 패드 연결, 촬영 중, 오류 |
 | 분배 | WAGO 221 3구 ×4 (J2 +, J3 접지, J4 속도 분기, J5 방향 분기) | 22 AWG 이상만 물린다 |
 
 Jetson 40핀 헤더에서 쓰는 핀: 1 (3.3 V), 3 (SDA), 5 (SCL), 6 (GND) → PCA9685. 도트 매트릭스: 2 (5 V), 20 (GND), 19 (DIN), 23 (CLK), 24 (CS).
@@ -68,7 +68,7 @@ PC 쪽 접속: Wi-Fi 같은 공유기, SSH (`ssh gsc@<IP>`), 파일 전송은 `s
 | 1 | `uv run python scripts/pin_test.py scan` | 0x40 서보용, 0x41 모터용 보드 응답 |
 | 2 | `uv run python scripts/pin_test.py servo` | 서보 60° → 120° → 90° |
 | 3 | `uv run python scripts/pin_test.py motor` | 두 바퀴가 같은 방향으로 10초, 정지, 반대 방향 10초 |
-| 4 | `uv run python scripts/dotmatrix_test.py status` | 도트 매트릭스에 상태 화면 9가지 |
+| 4 | `uv run python scripts/dotmatrix_test.py status` | 도트 매트릭스에 상태 화면 4가지 |
 | 5 | `uv run python -m collector --check` | "점검 완료", 서보가 중앙으로 한 번 |
 
 전진 명령에 뒤로 가면 선을 바꾸지 말고 `config.yaml` 의 `hardware.dir_forward_high: false`.
@@ -99,7 +99,7 @@ DualShock 4 조작
 터미널 상태줄 예: `[REC●] a=090 v=045 forward | saved=120 int=0.5s | 30:10 60:25 90:60 120:20 150:5`
 (조향각, 속도, 방향, 저장 장수, 간격, 클래스별 저장 수).
 
-도트 매트릭스: 위 5행 ▲ 전진 / ▼ 후진 / ■ 정지 (녹화 중이면 위 모서리 점멸), 7행 조향 위치 점, 8행 속도 막대, 오류 시 X 점멸.
+도트 매트릭스: ○ 고정 = 패드 연결·촬영 안 함, ● ↔ ○ 번갈아 = 촬영 중, 전체 번쩍 = □ 불량 표시, X = 패드 끊김·오류로 멈춤 (끝난 뒤에도 켜져 있다), 꺼짐 = 수집기 꺼짐.
 
 안전 동작
 - 패드 연결이 끊기면 0.5초 안에 정지하고 종료한다 (패드가 보내는 신호 흐름을 감시).

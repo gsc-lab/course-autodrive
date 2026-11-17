@@ -13,7 +13,7 @@ import struct
 from typing import List, Optional
 
 from common.display.base import Display, DisplayState
-from common.display.glyphs import flip_horizontal, render, rotate
+from common.display.glyphs import CROSS, ERROR_BLINK_HZ, flip_horizontal, render, rotate
 
 log = logging.getLogger(__name__)
 
@@ -81,19 +81,26 @@ class Max7219Display(Display):
         self._last: Optional[List[int]] = None
         log.info("MAX7219 준비: %s rotate=%d flip=%s", spi_dev, rotate_deg, flip)
 
-    def update(self, st: DisplayState, now: float) -> None:
-        blink_on = int(now * self.blink_hz * 2) % 2 == 0
-        rows = render(st, blink_on)
+    def _oriented(self, rows: List[int]) -> List[int]:
         if self.rotate_deg:
             rows = rotate(rows, self.rotate_deg)
         if self.flip:
             rows = flip_horizontal(rows)
+        return rows
+
+    def update(self, st: DisplayState, now: float) -> None:
+        blink_on = int(now * self.blink_hz * 2) % 2 == 0
+        fast_on = int(now * ERROR_BLINK_HZ * 2) % 2 == 0
+        rows = self._oriented(render(st, blink_on, fast_on))
         if rows != self._last:            # 바뀐 프레임만 보낸다
             self.chip.show(rows)
             self._last = rows
 
-    def close(self) -> None:
+    def close(self, keep_error: bool = False) -> None:
         try:
-            self.chip.shutdown()
+            if keep_error:                # MAX7219 는 마지막 화면을 스스로 유지한다. 다음 실행의 초기화가 지운다
+                self.chip.show(self._oriented(list(CROSS)))
+            else:
+                self.chip.shutdown()
         finally:
             self.chip.close()
