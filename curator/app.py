@@ -173,17 +173,20 @@ class FrameView(QWidget):
 
 
 # ---------------------------------------------------------------------------
-# 클래스 분포: 세로 막대 (포함 = 파랑, 제외 = 빨강을 위에 쌓음)
+# 클래스 분포: 가로 막대. 한 줄 = 각도 | 막대(포함 파랑 + 제외 빨강) | 장수 | 비율. 점선 = 각도별 평균(균형 기준)
 # ---------------------------------------------------------------------------
 class BarChart(QWidget):
+    ROW_H, TOP, BOTTOM = 34, 6, 22
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.data: List[Tuple[int, int, int]] = []     # (각도, 포함, 제외)
         self.current: Optional[int] = None             # 현재 프레임의 클래스
-        self.setMinimumHeight(180)
+        self.setMinimumHeight(self.TOP + 5 * self.ROW_H + self.BOTTOM)
 
     def set_data(self, data: List[Tuple[int, int, int]], current: Optional[int]) -> None:
         self.data, self.current = data, current
+        self.setFixedHeight(self.TOP + max(1, len(data)) * self.ROW_H + self.BOTTOM)
         self.update()
 
     def paintEvent(self, event) -> None:  # noqa: N802
@@ -191,42 +194,50 @@ class BarChart(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         if not self.data:
             return
-        w, h = self.width(), self.height()
-        top, bottom, left, right = 22, 40, 6, 6
-        plot_h = h - top - bottom
-        n = len(self.data)
-        slot = (w - left - right) / n
-        bar_w = min(46.0, slot * 0.62)
+        w = self.width()
+        label_w, count_w, pct_w, gap = 42, 46, 52, 8
+        x0 = label_w + gap
+        track_w = w - x0 - gap - count_w - pct_w
         peak = max(1, max(i + e for _, i, e in self.data))
         total = sum(i for _, i, _ in self.data)
-        p.setPen(QPen(QColor(C_BORDER), 1, Qt.DotLine))
-        for k in (0.5, 1.0):
-            yy = top + plot_h * (1 - k)
-            p.drawLine(QPointF(left, yy), QPointF(w - right, yy))
-        p.setPen(QPen(QColor("#5d6575"), 1))
-        p.drawLine(QPointF(left, top + plot_h), QPointF(w - right, top + plot_h))
-        small = QFont(); small.setPointSize(8)
-        bold = QFont(); bold.setPointSize(9); bold.setBold(True)
+        f_label = QFont(); f_label.setPointSize(10); f_label.setBold(True)
+        f_count = QFont(); f_count.setPointSize(10); f_count.setBold(True)
+        f_pct = QFont(); f_pct.setPointSize(10)
+        f_small = QFont(); f_small.setPointSize(8)
         for k, (angle, inc, exc) in enumerate(self.data):
-            cx = left + slot * (k + 0.5)
-            x0 = cx - bar_w / 2
-            hi = plot_h * inc / peak
-            he = plot_h * exc / peak
+            y = self.TOP + k * self.ROW_H
             is_cur = angle == self.current
-            p.setPen(Qt.NoPen)
-            p.setBrush(QColor("#6aa5ff" if is_cur else C_ACCENT))
+            if is_cur:                                   # 지금 보고 있는 사진의 각도: 줄 전체를 살짝 밝게
+                p.setPen(Qt.NoPen); p.setBrush(QColor(255, 196, 0, 26))
+                p.drawRoundedRect(QRectF(0, y + 2, w, self.ROW_H - 4), 6, 6)
+            p.setFont(f_label); p.setPen(QColor(C_AMBER if is_cur else C_TEXT))
+            p.drawText(QRectF(4, y, label_w - 4, self.ROW_H), Qt.AlignVCenter | Qt.AlignRight, f"{angle}°")
+            bar = QRectF(x0, y + 9, track_w, self.ROW_H - 18)
+            p.setPen(Qt.NoPen); p.setBrush(QColor("#30353f")); p.drawRoundedRect(bar, 4, 4)
+            wi = track_w * inc / peak
+            we = track_w * exc / peak
             if inc:
-                p.drawRoundedRect(QRectF(x0, top + plot_h - hi, bar_w, hi), 3, 3)
+                p.setBrush(QColor("#6aa5ff" if is_cur else C_ACCENT))
+                p.drawRoundedRect(QRectF(bar.x(), bar.y(), max(4.0, wi), bar.height()), 4, 4)
             if exc:
                 p.setBrush(QColor(C_DANGER))
-                p.drawRoundedRect(QRectF(x0, top + plot_h - hi - he, bar_w, max(2.0, he)), 3, 3)
-            p.setFont(bold); p.setPen(QColor(C_TEXT))
-            p.drawText(QRectF(cx - slot / 2, top + plot_h - hi - he - 18, slot, 16), Qt.AlignCenter, str(inc))
-            p.setPen(QColor(C_AMBER if is_cur else C_TEXT))
-            p.drawText(QRectF(cx - slot / 2, top + plot_h + 4, slot, 16), Qt.AlignCenter, f"{angle}°")
-            p.setFont(small); p.setPen(QColor(C_MUTED))
+                p.drawRoundedRect(QRectF(bar.x() + wi, bar.y(), max(3.0, we), bar.height()), 3, 3)
+            p.setFont(f_count); p.setPen(QColor(C_TEXT))
+            p.drawText(QRectF(x0 + track_w + gap, y, count_w, self.ROW_H), Qt.AlignVCenter | Qt.AlignRight, f"{inc:,}")
             share = inc / total * 100 if total else 0.0
-            p.drawText(QRectF(cx - slot / 2, top + plot_h + 20, slot, 14), Qt.AlignCenter, f"{share:.1f}%")
+            p.setFont(f_pct); p.setPen(QColor("#c3cad6"))
+            p.drawText(QRectF(w - pct_w, y, pct_w - 4, self.ROW_H), Qt.AlignVCenter | Qt.AlignRight, f"{share:.1f}%")
+        # 균형 기준선: 각도별 평균 장수 (모든 막대가 이 선 근처면 균형이 맞는 것)
+        rows_h = len(self.data) * self.ROW_H
+        if total:
+            mean = total / len(self.data)
+            xm = x0 + track_w * mean / peak
+            p.setPen(QPen(QColor("#aab3c2"), 1, Qt.DashLine))
+            p.drawLine(QPointF(xm, self.TOP + 2), QPointF(xm, self.TOP + rows_h - 2))
+            p.setFont(f_small); p.setPen(QColor(C_MUTED))
+            text = f"평균 {mean:,.0f}장"
+            tw = p.fontMetrics().horizontalAdvance(text)
+            p.drawText(QRectF(min(max(x0, xm - tw / 2), x0 + track_w - tw), self.TOP + rows_h + 2, tw + 2, 16), Qt.AlignCenter, text)
 
 
 # ---------------------------------------------------------------------------
@@ -619,7 +630,7 @@ class MainWindow(QMainWindow):
         self.summary = SummaryView(); lay.addWidget(self.summary)
         sl.addWidget(c)
 
-        c, lay = card("클래스 분포", "조향 각도별 포함 장수와 비율. 빨강은 제외된 장수.")
+        c, lay = card("클래스 분포", "파랑 포함 · 빨강 제외 · 점선은 각도별 평균.<br>막대 길이가 비슷할수록 균형이 맞습니다.")
         self.chart = BarChart(); lay.addWidget(self.chart)
         sl.addWidget(c)
 
