@@ -60,6 +60,7 @@ def test_window_opens_navigates_excludes_and_builds(qapp, tmp_path):
         assert [a for a, _, _ in win.chart.data] == [30, 60, 90, 120, 150]
         assert sum(i for _, i, _ in win.chart.data) == 9 and sum(e for _, _, e in win.chart.data) == 3
         assert win.timeline.n == 12 and win.timeline.excluded == [(0, 0), (2, 3)]      # 타임라인의 제외 구간
+        assert (win.summary.included, win.summary.excluded) == (9, 3)                 # 포함 + 제외 = 전체 12
         assert win.windowTitle().startswith("영진전문대 글로벌시스템융합과")
         path = build_dataset(win.ws, tmp_path / "out")
         with zipfile.ZipFile(path) as z:

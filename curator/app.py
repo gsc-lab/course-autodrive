@@ -170,7 +170,7 @@ class BarChart(QWidget):
         super().__init__(parent)
         self.data: List[Tuple[int, int, int]] = []     # (각도, 포함, 제외)
         self.current: Optional[int] = None             # 현재 프레임의 클래스
-        self.setMinimumHeight(190)
+        self.setMinimumHeight(180)
 
     def set_data(self, data: List[Tuple[int, int, int]], current: Optional[int]) -> None:
         self.data, self.current = data, current
@@ -217,6 +217,59 @@ class BarChart(QWidget):
             p.setFont(small); p.setPen(QColor(C_MUTED))
             share = inc / total * 100 if total else 0.0
             p.drawText(QRectF(cx - slot / 2, top + plot_h + 20, slot, 14), Qt.AlignCenter, f"{share:.1f}%")
+
+
+# ---------------------------------------------------------------------------
+# 데이터셋 구성 요약: 포함 + 제외 = 전체 (숫자 세 개와 비율 막대)
+# ---------------------------------------------------------------------------
+class SummaryView(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.included = self.excluded = 0
+        self.setFixedHeight(102)
+        self.setToolTip("포함: ‘데이터셋 만들기’ 에 들어가 학습에 쓰이는 사진\n제외: 빼기로 한 사진 (원본은 그대로, Insert 로 복구)\n전체: 연 세션의 모든 사진")
+
+    def set_counts(self, included: int, excluded: int) -> None:
+        self.included, self.excluded = included, excluded
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w = self.width()
+        total = self.included + self.excluded
+        big = QFont(); big.setPointSize(17); big.setBold(True)
+        lab = QFont(); lab.setPointSize(8)
+        op = QFont(); op.setPointSize(13)
+        cols = (("포함", self.included, C_ACCENT), ("제외", self.excluded, C_DANGER), ("전체", total, C_TEXT))
+        col_w, op_w = (w - 2 * 22) / 3, 22
+        x = 0.0
+        for k, (name, value, color) in enumerate(cols):
+            p.setFont(big); p.setPen(QColor(color))
+            p.drawText(QRectF(x, 2, col_w, 30), Qt.AlignCenter, f"{value:,}")
+            p.setFont(lab); p.setPen(QColor(C_MUTED))
+            p.drawText(QRectF(x, 32, col_w, 16), Qt.AlignCenter, f"{name} (장)")
+            x += col_w
+            if k < 2:
+                p.setFont(op); p.setPen(QColor(C_MUTED))
+                p.drawText(QRectF(x, 2, op_w, 30), Qt.AlignCenter, "+" if k == 0 else "=")
+                x += op_w
+        # 비율 막대: 파랑 = 포함, 빨강 = 제외
+        bar = QRectF(8, 62, w - 16, 14)
+        p.setPen(Qt.NoPen); p.setBrush(QColor("#30353f")); p.drawRoundedRect(bar, 7, 7)
+        if total:
+            wi = bar.width() * self.included / total
+            p.setBrush(QColor(C_DANGER)); p.drawRoundedRect(bar, 7, 7)
+            if self.included:
+                p.setBrush(QColor(C_ACCENT)); p.drawRoundedRect(QRectF(bar.x(), bar.y(), max(14.0, wi), bar.height()), 7, 7)
+                if self.excluded:                       # 경계는 반듯하게
+                    p.drawRect(QRectF(bar.x() + max(14.0, wi) - 7, bar.y(), 7, bar.height()))
+        p.setFont(lab); p.setPen(QColor(C_MUTED))
+        if total:
+            text = f"전체의 {self.included / total * 100:.1f}% 를 학습에 사용  ·  {self.excluded / total * 100:.1f}% 제외"
+        else:
+            text = "세션을 열면 사진 수가 표시됩니다"
+        p.drawText(QRectF(0, 84, w, 16), Qt.AlignCenter, text)
 
 
 # ---------------------------------------------------------------------------
@@ -439,20 +492,25 @@ class MainWindow(QMainWindow):
         side_inner = QWidget(); side_inner.setObjectName("side")
         sl = QVBoxLayout(side_inner); sl.setContentsMargins(12, 10, 12, 10); sl.setSpacing(8)
 
-        c, lay = card("세션", "수집기를 한 번 실행해 찍은 폴더. 파일로 남으며, 여러 세션을 열어 한 데이터셋으로 합칠 수 있다.")
+        c, lay = card("세션")
+        c.setToolTip("세션 = 수집기를 한 번 실행해 찍은 폴더. 파일로 남으며, 여러 세션을 열어 한 데이터셋으로 합칠 수 있다.\n"
+                     "클릭하면 그 세션의 첫 사진으로 이동")
         self.sessions_list = QListWidget(); self.sessions_list.setObjectName("sessions")
         self.sessions_list.setFocusPolicy(Qt.NoFocus); self.sessions_list.setFixedHeight(50)
         self.sessions_list.itemClicked.connect(self._on_session_clicked)
         lay.addWidget(self.sessions_list); sl.addWidget(c)
 
-        c, lay = card("선택", "한꺼번에 제외·복구할 사진들. 임시 선택이라 저장되지 않는다.")
-        self.range_label = QLabel(); self.range_label.setObjectName("value"); self.range_label.setWordWrap(True)
-        lay.addWidget(self.range_label); sl.addWidget(c)
+        c, lay = card("데이터셋 구성")
+        self.summary = SummaryView(); lay.addWidget(self.summary)
+        sl.addWidget(c)
 
         c, lay = card("클래스 분포", "조향 각도별 포함 장수와 비율. 빨강은 제외된 장수.")
         self.chart = BarChart(); lay.addWidget(self.chart)
-        self.total_label = QLabel(); self.total_label.setObjectName("value"); lay.addWidget(self.total_label)
         sl.addWidget(c)
+
+        c, lay = card("선택", "한꺼번에 제외·복구할 사진들. 임시 선택이라 저장되지 않는다.")
+        self.range_label = QLabel(); self.range_label.setObjectName("value"); self.range_label.setWordWrap(True)
+        lay.addWidget(self.range_label); sl.addWidget(c)
 
         c, lay = card("현재 프레임")
         self.info = QLabel(); self.info.setObjectName("value"); self.info.setWordWrap(True)
@@ -693,9 +751,7 @@ class MainWindow(QMainWindow):
         inc, exc = self.ws.counts()
         cur = self.ws.steering.quantize(self.frames[self.index].info.angle) if self.frames else None
         self.chart.set_data([(c, inc[c], exc[c]) for c in self.ws.steering.classes], cur)
-        ti, te = sum(inc.values()), sum(exc.values())
-        self.total_label.setText(f"포함 <b>{ti}</b>장 &nbsp;·&nbsp; <span style='color:{C_DANGER}'>제외 {te}장</span>"
-                                 f" &nbsp;·&nbsp; 전체 {ti + te}장")
+        self.summary.set_counts(sum(inc.values()), sum(exc.values()))
 
     # -- 이동 ------------------------------------------------------------
     def goto(self, i: int, extend: bool = False) -> None:
