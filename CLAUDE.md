@@ -58,7 +58,7 @@ personal lab images with no sensitive data; keep it, do not "harden" it away.
 
 The reference board is a Jetson Orin Nano Developer Kit Super on **JetPack 6.2.1** (L4T 36.4.7, Python
 3.10.12, TensorRT 10.3). JetPack 7.2.x was evaluated on 2026-11-04 and rejected for now (Python 3.12, no SD
-image); `docs/jetson-setup.md` has the notes. Provisioning a fresh image must go through
+image; the notes were removed from the student docs on 2026-11-17). Provisioning a fresh image must go through
 `scripts/jetson_setup.sh` so every board ends up identical; do not hand-document steps that the script
 does not perform.
 
