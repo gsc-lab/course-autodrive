@@ -294,6 +294,112 @@ class SummaryView(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# 현재 프레임: 위치(세션 안 몇 번째) · 상태 알약 · 조향 계기 · 속도 단계 · 촬영 시각 · 파일
+# ---------------------------------------------------------------------------
+class FrameInfoView(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.d: Optional[dict] = None
+        self.setFixedHeight(214)
+
+    def set_info(self, d: Optional[dict]) -> None:
+        self.d = d
+        self.setToolTip(d["name"] if d else "")
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w = self.width()
+        small = QFont(); small.setPointSize(8)
+        if not self.d:
+            p.setFont(small); p.setPen(QColor(C_MUTED))
+            p.drawText(self.rect(), Qt.AlignCenter, "세션을 열면 사진 정보가 여기에 나옵니다")
+            return
+        d = self.d
+        big = QFont(); big.setPointSize(15); big.setBold(True)
+        mid = QFont(); mid.setPointSize(10)
+        val = QFont(); val.setPointSize(14); val.setBold(True)
+        bold = QFont(); bold.setPointSize(9); bold.setBold(True)
+
+        # 1) 위치 + 상태 알약
+        p.setFont(big); p.setPen(QColor(C_TEXT))
+        pos = f"{d['in_session']:,}"
+        p.drawText(QRectF(0, 0, w, 28), Qt.AlignVCenter | Qt.AlignLeft, pos)
+        x = p.fontMetrics().horizontalAdvance(pos) + 5
+        p.setFont(mid); p.setPen(QColor(C_MUTED))
+        p.drawText(QRectF(x, 4, w, 24), Qt.AlignVCenter | Qt.AlignLeft, f"/ {d['session_len']:,} 번째")
+        excluded = d["reason"] is not None
+        text = ("제외 · 불량 표시 □" if d["reason"] == REASON_MARK else "제외") if excluded else "포함"
+        p.setFont(bold)
+        pw = p.fontMetrics().horizontalAdvance(text) + 26
+        pill = QRectF(w - pw, 3, pw, 22)
+        c = QColor(C_DANGER if excluded else C_OK)
+        bg = QColor(c); bg.setAlpha(40)
+        p.setBrush(bg); p.setPen(QPen(c, 1)); p.drawRoundedRect(pill, 11, 11)
+        p.setBrush(c); p.setPen(Qt.NoPen); p.drawEllipse(QPointF(pill.x() + 11, pill.center().y()), 3.5, 3.5)
+        p.setPen(QColor("#ff9c9c" if excluded else "#7ee2a0"))
+        p.drawText(QRectF(pill.x() + 18, pill.y(), pw - 22, 22), Qt.AlignVCenter | Qt.AlignLeft, text)
+
+        # 2) 세션 안 진행 막대 + 세션 이름 / 전체 위치
+        track = QRectF(0, 34, w, 5)
+        p.setPen(Qt.NoPen); p.setBrush(QColor("#30353f")); p.drawRoundedRect(track, 2.5, 2.5)
+        frac = d["in_session"] / max(1, d["session_len"])
+        p.setBrush(QColor(d["color"])); p.drawRoundedRect(QRectF(0, 34, max(5.0, w * frac), 5), 2.5, 2.5)
+        p.setFont(small); p.setPen(QColor(C_MUTED))
+        p.drawText(QRectF(0, 42, w, 16), Qt.AlignVCenter | Qt.AlignLeft, f"세션 {d['session']}")
+        p.drawText(QRectF(0, 42, w, 16), Qt.AlignVCenter | Qt.AlignRight, f"전체 {d['overall']:,} / {d['total']:,}")
+
+        # 3) 라벨 두 칸: 조향 계기, 속도 단계
+        tw, ty, th = (w - 8) / 2, 66, 88
+        for k in range(2):
+            p.setBrush(QColor("#20242d")); p.setPen(QPen(QColor(C_BORDER), 1))
+            p.drawRoundedRect(QRectF(k * (tw + 8), ty, tw, th), 8, 8)
+        p.setFont(small); p.setPen(QColor(C_MUTED))
+        p.drawText(QRectF(10, ty + 6, tw, 14), Qt.AlignLeft | Qt.AlignVCenter, "조향 라벨")
+        p.drawText(QRectF(tw + 18, ty + 6, tw, 14), Qt.AlignLeft | Qt.AlignVCenter, "속도 라벨")
+        # 조향: 반원 눈금 + 바늘 (왼쪽 끝 = 가장 왼쪽 조향)
+        cx, cy, r = tw / 2, ty + 58, 26
+        p.setPen(QPen(QColor("#4a5263"), 4, Qt.SolidLine, Qt.RoundCap)); p.setBrush(Qt.NoBrush)
+        p.drawArc(QRectF(cx - r, cy - r, 2 * r, 2 * r), 30 * 16, 120 * 16)
+        p.save(); p.translate(cx, cy); p.rotate(d["side"] * 60)
+        p.setPen(QPen(QColor(C_AMBER), 3, Qt.SolidLine, Qt.RoundCap)); p.drawLine(QPointF(0, 0), QPointF(0, -r + 3))
+        p.restore()
+        p.setBrush(QColor(C_AMBER)); p.setPen(Qt.NoPen); p.drawEllipse(QPointF(cx, cy), 3.5, 3.5)
+        p.setFont(val); p.setPen(QColor(C_TEXT))
+        p.drawText(QRectF(0, ty + 60, tw, 24), Qt.AlignCenter, f"{d['angle']}°")
+        side_text = "직진" if abs(d["side"]) < 0.05 else ("왼쪽" if d["side"] < 0 else "오른쪽")
+        p.setFont(small); p.setPen(QColor(C_AMBER))
+        p.drawText(QRectF(0, ty + 6, tw - 10, 14), Qt.AlignRight | Qt.AlignVCenter, side_text)
+        # 속도: 단계 막대 (설정의 throttle.levels 중 몇 단계인지)
+        levels = d["levels"]
+        ox = tw + 8
+        if levels:
+            n = len(levels)
+            level = min(range(n), key=lambda i: abs(levels[i] - d["speed"]))
+            bw, gap, base = 12, 5, ty + 56
+            start = ox + (tw - (n * bw + (n - 1) * gap)) / 2
+            for i in range(n):
+                h = 12 + 22 * (i + 1) / n
+                p.setBrush(QColor(C_ACCENT if i <= level else "#3a404c")); p.setPen(Qt.NoPen)
+                p.drawRoundedRect(QRectF(start + i * (bw + gap), base - h, bw, h), 2, 2)
+            p.setFont(small); p.setPen(QColor(C_ACCENT))
+            p.drawText(QRectF(ox, ty + 6, tw - 10, 14), Qt.AlignRight | Qt.AlignVCenter, f"{level + 1}단계 / {n}")
+        p.setFont(val); p.setPen(QColor(C_TEXT))
+        p.drawText(QRectF(ox, ty + 60, tw, 24), Qt.AlignCenter, f"{d['speed']}%")
+
+        # 4) 촬영 시각, 파일
+        y = ty + th + 10
+        for label, value in (("촬영", d["time"]), ("파일", d["name"])):
+            p.setFont(small); p.setPen(QColor(C_MUTED))
+            p.drawText(QRectF(0, y, 30, 18), Qt.AlignVCenter | Qt.AlignLeft, label)
+            p.setFont(mid if label == "촬영" else small); p.setPen(QColor(C_TEXT if label == "촬영" else "#c3cad6"))
+            text = p.fontMetrics().elidedText(value, Qt.ElideMiddle, int(w - 34))
+            p.drawText(QRectF(34, y, w - 34, 18), Qt.AlignVCenter | Qt.AlignLeft, text)
+            y += 20
+
+
+# ---------------------------------------------------------------------------
 # 타임라인: 전체 프레임을 한 줄로. 세션 경계, 제외(빨강), 구간(파랑), 현재 위치(노랑)
 # ---------------------------------------------------------------------------
 class Timeline(QWidget):
@@ -621,8 +727,7 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.sessions_list, 1); ll.addWidget(c, 1)            # 남는 높이는 세션 목록이 쓴다
 
         c, lay = card("현재 프레임")
-        self.info = QLabel(); self.info.setObjectName("value"); self.info.setWordWrap(True)
-        self.info.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.info = FrameInfoView()
         lay.addWidget(self.info); ll.addWidget(c)
 
         right, sl = panel("side", 348)
@@ -848,7 +953,7 @@ class MainWindow(QMainWindow):
         self._refresh_range_label()
         if not self.frames:
             self.view.set_frame(None, 0.0, "", None)
-            self.info.setText(f"<span style='color:{C_MUTED}'>세션을 열면 사진 정보가 여기에 나옵니다.</span>")
+            self.info.set_info(None)
             self.statusBar().showMessage("세션을 여세요  ·  단축키는 F1")
             return
         f = self.frames[self.index]
@@ -860,12 +965,11 @@ class MainWindow(QMainWindow):
         ts = f"{f.info.timestamp:%H:%M:%S}.{f.info.timestamp.microsecond // 1000:03d}"
         self.view.set_frame(pm, rot, f"{self.index + 1} / {len(self.frames)}     조향 {f.info.angle}°     속도 {f.info.speed}%     {ts}", reason)
         a, b = self._session_span[f.session]
-        state = (f"<span style='color:{C_DANGER}'>제외 — {'□ 불량 표시 구간' if reason == REASON_MARK else '직접 제외'}</span>"
-                 if reason else f"<span style='color:{C_OK}'>포함</span>")
-        def row(label: str, value: str) -> str:
-            return f"<div style='color:{C_MUTED}; font-size:11px; margin-top:6px'>{label}</div><div>{value}</div>"
-        self.info.setText(row("파일", f.name) + row("세션", f"{f.session} &nbsp;({self.index - a + 1} / {b - a + 1})")
-                          + row("라벨", f"조향 {f.info.angle}° · 속도 {f.info.speed}%") + row("상태", state))
+        self.info.set_info({
+            "name": f.name, "session": f.session, "color": self._session_color(f.session),
+            "in_session": self.index - a + 1, "session_len": b - a + 1, "overall": self.index + 1, "total": len(self.frames),
+            "angle": f.info.angle, "side": side, "speed": f.info.speed, "levels": list(self.cfg.throttle.levels),
+            "time": ts, "reason": reason})
         self.statusBar().showMessage(f"{self.index + 1} / {len(self.frames):,}   ·   세션 {f.session}   ·   제외 목록은 자동 저장됩니다")
         self.chart.set_data(self.chart.data, self.ws.steering.quantize(f.info.angle))
         for r in range(self.sessions_list.count()):

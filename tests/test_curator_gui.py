@@ -51,6 +51,10 @@ def test_window_opens_navigates_excludes_and_builds(qapp, tmp_path):
         assert len(win.ws.sessions) == 1 and win.index == 0 and "이미 열려 있는" in win.statusBar().currentMessage()
         assert sum(win.ws.counts()[1].values()) == 2                       # marks 구간 2장이 미리 제외
         win.goto(5); assert win.index == 5
+        info = win.info.d
+        assert (info["in_session"], info["session_len"], info["overall"], info["total"]) == (6, 12, 6, 12)
+        assert info["angle"] == 30 and info["side"] == -1.0 and info["speed"] == 45 and info["reason"] is None   # 5번 = 30°(왼쪽 끝)
+        win.goto(2); assert win.info.d["reason"] == "mark"                   # □ 구간이라 미리 제외된 사진
         win.goto(99); assert win.index == 11                                # 끝에서 멈춤
         win.goto(-3); assert win.index == 0
         win.goto(6); win.goto(8, extend=True)                               # Shift+→ 두 번: 6~8 연속 선택
