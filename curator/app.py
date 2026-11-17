@@ -493,8 +493,8 @@ class SessionItem(QWidget):
         for value, label, c in ((f"{frames:,}", "사진", C_TEXT), (f"{excluded:,}", "제외", C_DANGER if excluded else C_MUTED),
                                 (f"{marks}회", "불량 표시 □", C_AMBER if marks else C_MUTED)):
             box = QVBoxLayout(); box.setSpacing(0)
-            v = QLabel(value); v.setObjectName("statValue"); v.setStyleSheet(f"color:{c};")
-            n = QLabel(label); n.setObjectName("hint")
+            v = QLabel(value); v.setObjectName("statValue"); v.setStyleSheet(f"color:{c};"); v.setAlignment(Qt.AlignCenter)
+            n = QLabel(label); n.setObjectName("hint"); n.setAlignment(Qt.AlignCenter)
             box.addWidget(v); box.addWidget(n); stats.addLayout(box, 1)
         col.addLayout(stats)
         row.addLayout(col, 1)
