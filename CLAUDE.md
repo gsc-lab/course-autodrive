@@ -21,8 +21,9 @@ verified on the reference car with `scripts/pin_test.py servo` / `motor 15`. Tra
 Still open: a hardware stop for I2C loss (PCA9685 has no watchdog; the car has no main switch, so pulling the battery
 connector is the only stop), and an on-track check of the three 2026-11-10 safety guards (Wi-Fi off / pad off / double start).
 
-Current repo state (2026-11-10): `config.yaml`, `common/`, `collector/` and `tests/` exist and pass
-`pytest`; `curator/`, `trainer/`, `inference/` are not written yet. `docs/jetson-setup.md` holds the
+Current repo state (2026-11-17): `config.yaml`, `common/`, `collector/`, `curator/` and `tests/` exist and pass
+`pytest`; `trainer/` and `inference/` are not written yet. `curator/core.py` (session sources, soft exclusion in
+`curation.json`, dataset zip) is GUI-free and tested; `curator/app.py` is the PySide6 window (`uv sync --extra gui`). `docs/jetson-setup.md` holds the
 one-time Jetson setup (packages, i2c/input permissions, DualShock 4 pairing, I2C check). **The header-PWM
 (`jetson_pwm`, Jetson.GPIO, jetson-io pinmux, pin-29 overlay patch) code path was removed entirely on 2026-11-10**
 at the user's request: every actuator signal comes from the two PCA9685 boards over I2C. Do not reintroduce
@@ -36,7 +37,8 @@ add dependencies with `uv add` (core) / `uv add --optional pc|jetson` / `uv add 
 
 ```bash
 uv sync --group dev                    # core + pytest (fast; enough for tests and --mock)
-uv sync --extra pc                     # + PySide6, torch 2.11 cu128, onnx (multi-GB download, PC only)
+uv sync --extra gui                    # + PySide6 only (curator). --extra train adds torch cu128/onnx (multi-GB); --extra pc = both
+uv run -m curator dataset/20261110_1906  # PC: review a session (or several / zips), exclude frames, build dataset_*.zip
 uv run pytest                          # unit tests + a mock end-to-end collector run (no hardware)
 uv run pytest tests/test_state.py -k deadman
 uv run python -m collector --mock      # PC dry run: mock vehicle + synthetic camera + keyboard (needs a real tty)
@@ -136,8 +138,9 @@ Single-source rules: the steering class list, the filename format, and the prepr
 live in exactly one place (`config.yaml` + `common/`) and every program imports them. The legacy code had
 the class list copied into four files; do not recreate that.
 
-Dependencies are split into uv extras: `pc` (PySide6, torch, onnx, pandas) and `jetson` (evdev; tensorrt and
-cuda-python come from JetPack through `--system-site-packages`). Jetson-only modules must be importable on the PC
+Dependencies are split into uv extras: `gui` (PySide6), `train` (torch, onnx, pandas, pillow), `pc` (= gui + train);
+evdev is a core dependency with a linux marker (tensorrt and cuda-python come from JetPack through
+`--system-site-packages`). Jetson-only modules must be importable on the PC
 without side effects at import time (no device opens, no terminal mode changes at import).
 
 ## Contracts between stages

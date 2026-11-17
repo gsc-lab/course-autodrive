@@ -153,6 +153,15 @@ class DisplayConfig:
 
 
 @dataclass
+class CuratorConfig:
+    """가공 도구(PC) 화면 설정."""
+    arrow_max_deg: float = 60.0     # 조향 끝(steering.min/max)일 때 화살표가 기울어지는 각도
+    arrow_invert: bool = False      # 화살표가 실제 차의 방향과 반대로 보이면 true (steering.invert 와 별개)
+    thumb_px: int = 96              # 필름스트립 썸네일 크기
+    autoplay_fps: float = 10.0      # 자동 재생 속도
+
+
+@dataclass
 class PreprocessConfig:
     crop_top_ratio: float = 0.4
     crop_bottom_ratio: float = 1.0
@@ -171,6 +180,7 @@ class Config:
     input: InputConfig = field(default_factory=InputConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
     display: DisplayConfig = field(default_factory=DisplayConfig)
+    curator: CuratorConfig = field(default_factory=CuratorConfig)
     preprocess: PreprocessConfig = field(default_factory=PreprocessConfig)
     source_path: Optional[str] = None  # 어디서 읽었는지 (스냅샷에는 포함하지 않음)
 
@@ -300,6 +310,10 @@ def validate(cfg: Config) -> None:
         raise ConfigError("display.rotate 는 0, 90, 180, 270 중 하나여야 합니다")
     if not (0.2 <= float(d.blink_hz) <= 10):
         raise ConfigError("display.blink_hz 는 0.2~10 이어야 합니다")
+
+    cu = cfg.curator
+    if not (1 <= cu.arrow_max_deg <= 90) or cu.thumb_px < 32 or not (1 <= cu.autoplay_fps <= 60):
+        raise ConfigError("curator 설정 범위: arrow_max_deg 1~90, thumb_px ≥ 32, autoplay_fps 1~60")
 
     if cfg.input.primary not in ("ds4", "keyboard"):
         raise ConfigError("input.primary 는 ds4 또는 keyboard 여야 합니다")

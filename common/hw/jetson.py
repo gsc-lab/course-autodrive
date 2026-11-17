@@ -78,7 +78,7 @@ class JetsonVehicle(Vehicle):
         pending = self._steer_pending
         if pending is not None:
             time.sleep(max(0.0, pending[0] - time.monotonic()))
-            self.service()
+            self.service(now=pending[0])      # sleep 이 조금 일찍 깨어나도 마감으로 간주 (테스트 흔들림 방지)
 
     # ------------------------------------------------------------------ motor
     def _set_direction(self, direction: str) -> None:

@@ -15,14 +15,19 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# PC 전용: curator(PySide6), trainer(torch)
-pc = [
+# PC 전용. gui = curator(PySide6, 수백 MB), train = trainer(torch cu128, 수 GB). pc = 둘 다
+gui = [
     "PySide6>=6.7",
+]
+train = [
     "pillow>=10.0",
     "pandas>=2.0",
     "torch>=2.7",
     "torchvision>=0.22",
     "onnx>=1.16",
+]
+pc = [
+    "course-autodrive[gui,train]",
 ]
 
 [dependency-groups]

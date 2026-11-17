@@ -11,14 +11,14 @@
 ```
 [Jetson 차량]  collector  : DualShock 4 로 주행하며 사진 + 라벨 수집  →  dataset/<세션>/
       ↓ scp / USB
-[PC]           curator    : 사진 검토, 불량 제외, 데이터셋 zip 생성            (예정)
+[PC]           curator    : 사진 검토, 불량 제외, 데이터셋 zip 생성
 [PC]           trainer    : PyTorch 학습 → ONNX + model_meta.json               (예정)
       ↓ git / scp
 [Jetson 차량]  inference  : ONNX → TensorRT 10 엔진, 자율주행                    (예정)
 ```
 
-- 완성: `collector` (수집기), 하드웨어 드라이버, 상태 표시, 설치 스크립트, 배선도.
-- 미완성: `curator`, `trainer`, `inference`. 단계 사이의 파일 계약(7절)은 확정되어 있다.
+- 완성: `collector` (수집기), `curator` (가공 도구), 하드웨어 드라이버, 상태 표시, 설치 스크립트, 배선도.
+- 미완성: `trainer`, `inference`. 단계 사이의 파일 계약(7절)은 확정되어 있다.
 - 조향 라벨은 **5단계 분류** (서보 각도 30, 60, 90, 120, 150°; 90° 가 직진). 속도 라벨은 30/45/60 %.
 
 ## 2. 하드웨어
@@ -209,6 +209,26 @@ USB 메모리로 복사해도 된다. 가공 도구(curator)는 세션 폴더(�
 각도별 최소 400장, 각도 간 균형(직진만 많이 찍히기 쉬움), 트랙 양 끝·중앙·완만한 곡선·급한 곡선을 골고루, 급조작은 피한다,
 한 번에 끝내지 말고 여러 번 반복 주행, 파일명과 폴더 구조를 손으로 바꾸지 않는다, 실수한 구간은 그 자리에서 □ 로 표시한다.
 
+## 6b. 가공 도구 curator (PC) 사용법
+
+```bash
+uv sync --extra gui                          # 처음 한 번 (PySide6)
+uv run -m curator dataset/20261110_1906      # 세션 폴더(여러 개 가능) 또는 세션 zip
+```
+
+| 조작 | 동작 |
+|---|---|
+| ←/→, PageUp/PageDown, Home/End | 한 장 / 10장 / 처음·끝 이동. Space 자동 재생 |
+| 화면 | 사진 위에 조향 화살표(각도에 따라 기울어짐), 아래 필름스트립, 오른쪽에 클래스별 장수·비율 |
+| `[` `]` | 구간 시작·끝 표시 (필름스트립에 파란색) |
+| Delete / Insert | 구간(없으면 현재 장)을 제외 / 복구. X 는 현재 장 토글 |
+| Ctrl+Z | 되돌리기 |
+| 데이터셋 만들기 (Ctrl+B) | 포함된 사진을 수집 순서로 번호를 매겨 `dataset_YYYYMMDD_HHMM.zip` 생성 |
+
+- 수집 중 □ 로 표시한 구간(`marks.csv`)의 사진은 열 때 **미리 제외**되어 빨간색으로 보인다. 잘못됐으면 Insert 로 복구.
+- 제외는 소프트다: 원본 사진은 그대로 두고 세션 폴더의 `curation.json` 에만 기록한다 (바뀔 때마다 자동 저장). 다시 열면 그대로 복원.
+- 여러 세션을 함께 열어 한 zip 으로 합칠 수 있다.
+
 ## 7. 단계 사이 파일 계약 (curator·trainer·inference 작성 시 기준)
 
 - curator → trainer: `dataset_YYYYMMDD_HHMM.zip` = `images/…_{index:06d}.jpg` + `labels.csv` (`index,image,servo_angle,motor_speed,source`) + `meta.json` (클래스, 이미지 크기, 세션 목록, 클래스별 수, 제외 수). 원본은 수정하지 않고 `curation.json` 에 제외 목록만 남긴다. 여러 세션을 한 zip 으로 합칠 수 있다.
@@ -234,9 +254,10 @@ USB 메모리로 복사해도 된다. 가공 도구(curator)는 세션 폴더(�
 config.yaml          모든 프로그램이 공유하는 설정 (단일 출처)
 common/              설정 로더, 파일명 규약, 조향 클래스, 전처리, PCA9685 드라이버(common/hw), 입력 장치(common/inputs), 표시(common/display)
 collector/           수집기 (상태 머신 collector/state.py 에 주행·녹화 규칙)
+curator/             가공 도구 (core.py 로직 + app.py PySide6 화면)
 scripts/             jetson_setup.sh(설치), pin_test.py(동작 시험), dotmatrix_test.py, make_wiring_doc.py(배선도 생성)
 docs/                jetson-setup.md, wiring.pdf, system-brief.md(이 문서)
-tests/               pytest 91개 (PC 에서 하드웨어 없이 실행 가능, `uv run pytest`)
+tests/               pytest 97개 (PC 에서 하드웨어 없이 실행 가능, `uv run pytest`)
 ```
 
 ## 10. 이전 자료와의 차이 (강의 자료에서 고쳐야 할 것)

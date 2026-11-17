@@ -15,7 +15,7 @@
 |---|---|---|
 | [common/](common/) | 공용 | 설정, 파일 이름 규약, 조향 모델, 전처리, 하드웨어·입력 장치 드라이버 |
 | [collector/](collector/) | Jetson | DualShock 4 로 주행하며 데이터 수집 → `dataset/<세션>/` |
-| curator/ (예정) | PC | 세션 검토·불량 제외 → 데이터셋 zip |
+| [curator/](curator/) | PC | 세션 검토·불량 제외 → 데이터셋 zip (`uv sync --extra gui` 후 `uv run -m curator <세션>`) |
 | trainer/ (예정) | PC | 학습 → ONNX + model_meta.json |
 | inference/ (예정) | Jetson | TensorRT 추론 자율주행 |
 | [docs/](docs/) | | [Jetson 설정](docs/jetson-setup.md), 배선도, 보고서 |
@@ -28,7 +28,7 @@
 
 ```bash
 # PC: 의존성 + 테스트 + 모의 실행(가짜 차량/카메라, 키보드)
-uv sync --extra pc                 # PySide6, torch(CUDA 12.8), pytest 까지 설치 (첫 실행은 수 GB 다운로드)
+uv sync --extra gui                # PySide6 (curator). 학습까지 하려면 --extra pc (torch, 수 GB)
 uv run pytest
 uv run python -m collector --mock
 

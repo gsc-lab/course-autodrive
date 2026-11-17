@@ -47,6 +47,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+gui = [
+    { name = "pyside6" },
+]
 pc = [
     { name = "onnx", version = "1.19.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13' and platform_machine != 'x86_64' and sys_platform != 'win32'" },
     { name = "onnx", version = "1.23.2", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.13' and platform_machine != 'x86_64') or platform_machine == 'x86_64' or sys_platform == 'win32'" },
@@ -61,6 +64,19 @@ pc = [
     { name = "torchvision", version = "0.26.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "platform_machine == 'x86_64' or sys_platform == 'win32'" },
     { name = "torchvision", version = "0.29.2", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'x86_64' and sys_platform != 'win32'" },
 ]
+train = [
+    { name = "onnx", version = "1.19.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13' and platform_machine != 'x86_64' and sys_platform != 'win32'" },
+    { name = "onnx", version = "1.23.2", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.13' and platform_machine != 'x86_64') or platform_machine == 'x86_64' or sys_platform == 'win32'" },
+    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and platform_machine == 'x86_64') or (python_full_version < '3.11' and sys_platform == 'win32') or (platform_machine != 'x86_64' and sys_platform != 'win32')" },
+    { name = "pandas", version = "3.1.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine == 'x86_64') or (python_full_version >= '3.11' and sys_platform == 'win32')" },
+    { name = "pillow", version = "12.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "pillow", version = "13.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "torch", version = "2.11.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "platform_machine == 'x86_64' or sys_platform == 'win32'" },
+    { name = "torch", version = "2.14.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' and platform_machine != 'x86_64' and sys_platform != 'win32'" },
+    { name = "torch", version = "2.15.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and platform_machine != 'x86_64' and sys_platform != 'win32'" },
+    { name = "torchvision", version = "0.26.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "platform_machine == 'x86_64' or sys_platform == 'win32'" },
+    { name = "torchvision", version = "0.29.2", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'x86_64' and sys_platform != 'win32'" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -69,21 +85,22 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "course-autodrive", extras = ["gui", "train"], marker = "extra == 'pc'" },
     { name = "evdev", marker = "sys_platform == 'linux'", specifier = ">=1.7" },
     { name = "numpy", marker = "platform_machine != 'aarch64'", specifier = ">=1.26" },
     { name = "numpy", marker = "platform_machine == 'aarch64'", specifier = ">=1.24,<2" },
-    { name = "onnx", marker = "extra == 'pc'", specifier = ">=1.16" },
+    { name = "onnx", marker = "extra == 'train'", specifier = ">=1.16" },
     { name = "opencv-python", specifier = ">=4.9" },
-    { name = "pandas", marker = "extra == 'pc'", specifier = ">=2.0" },
-    { name = "pillow", marker = "extra == 'pc'", specifier = ">=10.0" },
-    { name = "pyside6", marker = "extra == 'pc'", specifier = ">=6.7" },
+    { name = "pandas", marker = "extra == 'train'", specifier = ">=2.0" },
+    { name = "pillow", marker = "extra == 'train'", specifier = ">=10.0" },
+    { name = "pyside6", marker = "extra == 'gui'", specifier = ">=6.7" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "torch", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'pc') or (sys_platform == 'win32' and extra == 'pc')", specifier = ">=2.7", index = "https://download.pytorch.org/whl/cu128" },
-    { name = "torch", marker = "(platform_machine != 'x86_64' and sys_platform == 'linux' and extra == 'pc') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'pc')", specifier = ">=2.7" },
-    { name = "torchvision", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'pc') or (sys_platform == 'win32' and extra == 'pc')", specifier = ">=0.22", index = "https://download.pytorch.org/whl/cu128" },
-    { name = "torchvision", marker = "(platform_machine != 'x86_64' and sys_platform == 'linux' and extra == 'pc') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'pc')", specifier = ">=0.22" },
+    { name = "torch", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'train') or (sys_platform == 'win32' and extra == 'train')", specifier = ">=2.7", index = "https://download.pytorch.org/whl/cu128" },
+    { name = "torch", marker = "(platform_machine != 'x86_64' and sys_platform == 'linux' and extra == 'train') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'train')", specifier = ">=2.7" },
+    { name = "torchvision", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'train') or (sys_platform == 'win32' and extra == 'train')", specifier = ">=0.22", index = "https://download.pytorch.org/whl/cu128" },
+    { name = "torchvision", marker = "(platform_machine != 'x86_64' and sys_platform == 'linux' and extra == 'train') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'train')", specifier = ">=0.22" },
 ]
-provides-extras = ["pc"]
+provides-extras = ["gui", "train", "pc"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8.0" }]
