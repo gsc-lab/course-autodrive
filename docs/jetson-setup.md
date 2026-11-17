@@ -57,7 +57,7 @@ uv run python -m collector              # 수집 시작
 | 패키지 | git curl python3-dev build-essential bluez v4l-utils i2c-tools | evdev 가 소스에서 빌드되므로 python3-dev 필요. i2c-tools 는 `i2cdetect` |
 | 그룹 | i2c, input, bluetooth, video, gpio 에 사용자 추가 | 새로 추가된 그룹은 재로그인 후 적용. i2c 는 `/dev/i2c-7`, gpio 는 `/dev/spidev0.0`(도트 매트릭스) 때문 |
 | SPI1 | `config-by-function.py -o dt spi1` (도트 매트릭스용, 헤더 핀 19/21/23/24/26) | 바뀌면 재부팅 필요. jetson-io 를 쓰는 유일한 항목 |
-| bluez | `/etc/bluetooth/input.conf` 에 `ClassicBondedOnly=false` | bluez 5.56+ 기본값은 본딩 전 DS4 의 연결을 거부해 페어링이 실패한다(로그: `Access denied: org.bluez.Error.Rejected`). 수업용 개인 이미지이므로 허용 (2026-11-04 결정) |
+| bluez | `/etc/bluetooth/input.conf` 에 `ClassicBondedOnly=false` | bluez 5.56+ 기본값은 본딩 전 DS4 의 연결을 거부해 페어링이 실패한다(로그: `Access denied: org.bluez.Error.Rejected`). |
 | udev | DS4 라이트바 90-ds4-leds.rules, 패드 연결 감시 91-ds4-hidraw.rules | 라이트바는 sony 계열 HID 드라이버가 있을 때만 의미 있음. 연결 감시는 패드가 끊기면 0.5초 안에 차를 세우는 데 필요 |
 | uv | 설치 후 `uv venv --system-site-packages --python /usr/bin/python3` → `uv sync` | JetPack 의 tensorrt·cuda 가 venv 안에서 보이게. evdev 는 기본 의존성(리눅스 마커)이라 `uv run` 만 해도 유지된다. torch/PySide6 는 받지 않음 |
 
@@ -87,7 +87,6 @@ PCA9685 는 통신이 끊겨도 마지막 출력을 유지한다. 주행 중 I2C
 
 MAX7219 8×8 모듈을 Jetson 헤더에 직결한다 (추가 부품 없음): VCC → 핀 2 (5 V), GND → 핀 20, DIN → 핀 19, CS → 핀 24, CLK → 핀 23.
 `install` 이 jetson-io 로 SPI1 을 켜고(재부팅 필요) `/dev/spidev0.0` 이 생긴다. 사용자는 `gpio` 그룹이어야 한다.
-Jetson 의 3.3 V 신호는 MAX7219 규격(HIGH 3.5 V)보다 조금 낮지만 2026-11-10 실기에서 10분 연속 전송에 깨짐이 없어 직결로 쓴다.
 
 | 화면 | 뜻 |
 |---|---|
@@ -156,7 +155,3 @@ USB 메모리로 복사해도 된다. 가공 도구(curator)는 세션 폴더나
 
 `docs/wiring.pdf` 4절을 따른다. 바퀴를 띄우고 `pin_test.py scan` → `servo` → `motor` → `collector --check` 순서로 돌려
 두 보드 응답, 서보 움직임, 두 바퀴가 같은 방향으로 10초씩 전진·후진하는지 본다.
-
-## JetPack 7.x 를 쓰려면
-
-2026-11 기준 권장하지 않는다. 7.2.x 는 Python 3.12, TensorRT 10.16 으로 바뀌고 SD 카드 이미지가 없다. 전환할 때는 `.python-version` 을 3.12 로 바꾸고 `uv lock` 을 다시 만들어야 한다.

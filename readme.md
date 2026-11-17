@@ -23,9 +23,6 @@
 |---|---|---|
 | [collector/](collector/) | Jetson | 패드로 운전하며 사진 수집 → `dataset/<세션>/` |
 | [curator/](curator/) | PC | 세션 검토, 불량 사진 제외 → 데이터셋 zip |
-| trainer/ (예정) | PC | 학습 → ONNX 모델 |
-| inference/ (예정) | Jetson | TensorRT 추론으로 자율주행 |
-| [common/](common/) | 공용 | 설정, 파일 이름 규칙, 조향 모델, 하드웨어·입력 장치 드라이버 |
 | [docs/](docs/) | | [Jetson 설정](docs/jetson-setup.md), [배선도](docs/wiring.pdf) |
 
 설정은 저장소 루트의 [config.yaml](config.yaml) 한 파일에 모여 있습니다. 조향 단계, 속도 단계, 저장 간격을 여기서 바꿉니다.
@@ -48,16 +45,14 @@ SD 카드를 새로 구웠다면 [docs/jetson-setup.md](docs/jetson-setup.md) �
 
 ### PC
 
-의존성은 [uv](https://docs.astral.sh/uv/) 로 관리합니다. Python 3.10 을 씁니다 (Jetson 과 같은 버전).
+[uv](https://docs.astral.sh/uv/) 를 먼저 설치합니다.
 
 ```bash
 git clone https://github.com/gsc-lab/course-autodrive.git
 cd course-autodrive
-uv sync --extra gui                     # 가공 프로그램용. 학습까지 하려면 --extra pc (torch 포함, 수 GB)
+uv sync --extra gui                     # 가공 프로그램 설치
 uv run -m curator dataset/20261110_1906 # 세션 폴더를 열어 검토 (여러 개를 함께 열 수 있음)
 ```
-
-차 없이 수집기를 연습하려면 `uv run python -m collector --mock` 을 실행합니다. 가짜 차와 카메라를 키보드로 조종합니다.
 
 ## 🎮 운전 방법 (DualShock 4)
 
@@ -106,5 +101,4 @@ scp -r gsc@192.168.50.119:~/course-autodrive/dataset/20261110_1906 ./dataset/
 | 서보용 | 0x40 | 채널 0 → 조향 서보 (LD-1501MG, 전원은 UBEC 6 V) |
 | 모터용 | 0x41 | 채널 0 속도, 채널 1 방향 → 모터 드라이버 (Cytron MDD10A) → 뒷바퀴 모터 2개 |
 
-Jetson 40핀 헤더에서는 핀 1 (3.3 V), 3 (SDA), 5 (SCL), 6 (GND) 를 씁니다. 헤더의 PWM 핀은 쓰지 않습니다.
 전체 배선은 [docs/wiring.pdf](docs/wiring.pdf) 에 있습니다.
