@@ -12,7 +12,8 @@ import pytest
 
 from common.config import DEFAULT_CONFIG_PATH, load_config
 from common.filename import make_frame_name
-from curator.core import REASON_MARK, REASON_USER, Curation, SessionSource, Workspace, build_dataset
+from curator.core import (REASON_MARK, REASON_USER, AlreadyOpen, Curation, NoFrames, SessionSource, Workspace,
+                          build_dataset)
 
 
 def _jpeg(color):
@@ -96,8 +97,12 @@ def test_workspace_counts_and_dataset_zip_contract(tmp_path):
     make_session(tmp_path / "in", "20261110_1930", n=5, mark=(0, 0))
     ws.open(tmp_path / "in" / "20261110_1906")
     ws.open(tmp_path / "in" / "20261110_1930")
-    with pytest.raises(ValueError):
+    with pytest.raises(AlreadyOpen):
         ws.open(tmp_path / "in" / "20261110_1930")
+    (tmp_path / "in" / "20261110_2000").mkdir()             # 녹화 없이 끝난 빈 세션
+    with pytest.raises(NoFrames):
+        ws.open(tmp_path / "in" / "20261110_2000")
+    assert len(ws.sessions) == 2
     frames = ws.frames()
     assert len(frames) == 15 and [f.session for f in frames[:10]] == ["20261110_1906"] * 10
     inc, exc = ws.counts()

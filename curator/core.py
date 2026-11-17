@@ -28,6 +28,14 @@ REASON_MARK = "mark"        # marks.csv 구간 안이라 자동 제외
 REASON_USER = "user"        # 사람이 제외
 
 
+class AlreadyOpen(ValueError):
+    """같은 이름의 세션이 이미 열려 있다. 오류라기보다 알림이다."""
+
+
+class NoFrames(ValueError):
+    """수집기가 만든 사진(…_aNNN_sNNN.jpg)이 하나도 없는 폴더/zip."""
+
+
 # ---------------------------------------------------------------------------
 # 세션 소스
 # ---------------------------------------------------------------------------
@@ -226,7 +234,10 @@ class Workspace:
         src = SessionSource(path)
         if any(s.name == src.name for s in self.sessions):
             src.close()
-            raise ValueError(f"이미 열린 세션입니다: {src.name}")
+            raise AlreadyOpen(src.name)
+        if not src.frames:
+            src.close()
+            raise NoFrames(src.name)
         self.sessions.append(src)
         self.curations[src.name] = Curation.load_or_init(src)
         return src
@@ -283,7 +294,7 @@ def build_dataset(ws: Workspace, out_dir: Path | str, now: Optional[datetime] = 
     zip_path = out_dir / make_dataset_zip_name(stamp)
     frames = [f for f in ws.frames() if not ws.is_excluded(f)]
     if not frames:
-        raise ValueError("포함된 프레임이 없습니다")
+        raise NoFrames("포함된 사진이 없습니다")
     inc, exc = ws.counts()
     cam = ws.cfg.camera
     labels = io.StringIO()

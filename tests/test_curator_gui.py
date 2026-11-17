@@ -39,6 +39,8 @@ def test_window_opens_navigates_excludes_and_builds(qapp, tmp_path):
     try:
         win.open_paths([str(d)])
         assert len(win.frames) == 12 and win.strip.count() == 12
+        win.goto(7); win.open_paths([str(d)])                               # 같은 세션을 또 열면 창 없이 알림만, 첫 장으로
+        assert len(win.ws.sessions) == 1 and win.index == 0 and "이미 열려 있는" in win.statusBar().currentMessage()
         assert sum(win.ws.counts()[1].values()) == 2                       # marks 구간 2장이 미리 제외
         win.goto(5); assert win.index == 5
         win.goto(99); assert win.index == 11                                # 끝에서 멈춤

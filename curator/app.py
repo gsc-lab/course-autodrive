@@ -25,7 +25,9 @@ from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QFrame, QGrid
                                QScrollArea, QSizePolicy, QVBoxLayout, QWidget)
 
 from common.config import Config
-from curator.core import REASON_MARK, Frame, SessionSource, Workspace, build_dataset
+import zipfile
+
+from curator.core import REASON_MARK, AlreadyOpen, Frame, NoFrames, SessionSource, Workspace, build_dataset
 
 log = logging.getLogger("curator")
 
@@ -615,13 +617,40 @@ class MainWindow(QMainWindow):
         ShortcutDialog(self).exec()
 
     # -- 세션 ------------------------------------------------------------
+    def _notice(self, title: str, text: str, detail: str = "") -> None:
+        """짧은 알림 창: 굵은 한 줄 + (있으면) 작은 설명 한 줄. 전체 경로는 보여 주지 않는다."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning); box.setWindowTitle(title); box.setText(f"<b>{text}</b>")
+        if detail:
+            box.setInformativeText(detail)
+        box.exec()
+
     def open_paths(self, paths: List[str]) -> None:
+        opened, already, problems = [], [], []
         for p in paths:
+            name = Path(p).name
             try:
-                self.ws.open(p)
-            except (ValueError, FileNotFoundError, OSError) as e:
-                QMessageBox.warning(self, "열기 실패", f"{p}\n{e}")
+                opened.append(self.ws.open(p))
+            except AlreadyOpen as e:
+                already.append(str(e))
+            except NoFrames:
+                problems.append(f"{name} — 수집한 사진이 없습니다")
+            except FileNotFoundError:
+                problems.append(f"{name} — 찾을 수 없습니다")
+            except zipfile.BadZipFile:
+                problems.append(f"{name} — 열 수 없는 zip 입니다")
+            except (ValueError, OSError) as e:
+                problems.append(f"{name} — {e}")
         self._refresh_all()
+        if opened:
+            self.goto(self._session_span[opened[0].name][0])
+            self.statusBar().showMessage(f"세션 {len(opened)}개를 열었습니다 (사진 {sum(len(s.frames) for s in opened):,}장)", 4000)
+        elif already and not problems:                      # 오류가 아니다: 그 세션으로 데려다주기만 한다
+            self.goto(self._session_span[already[0]][0])
+            self.statusBar().showMessage(f"이미 열려 있는 세션입니다: {', '.join(already)}", 4000)
+        if problems:
+            self._notice("세션 열기", "열지 못한 항목이 있습니다" if len(problems) > 1 else "세션을 열지 못했습니다",
+                         "<br>".join(problems))
 
     def open_folder_dialog(self) -> None:
         d = QFileDialog.getExistingDirectory(self, "세션 폴더 선택", str(Path(self.cfg.recording.root)))
@@ -635,7 +664,7 @@ class MainWindow(QMainWindow):
 
     def save(self) -> None:
         self.ws.save()
-        self.statusBar().showMessage("curation.json 저장", 2000)
+        self.statusBar().showMessage("제외 목록을 저장했습니다", 2000)
 
     def _session_color(self, name: str) -> str:
         names = sorted(s.name for s in self.ws.sessions)
@@ -776,7 +805,7 @@ class MainWindow(QMainWindow):
             return f"<div style='color:{C_MUTED}; font-size:11px; margin-top:6px'>{label}</div><div>{value}</div>"
         self.info.setText(row("파일", f.name) + row("세션", f"{f.session} &nbsp;({self.index - a + 1} / {b - a + 1})")
                           + row("라벨", f"조향 {f.info.angle}° · 속도 {f.info.speed}%") + row("상태", state))
-        self.statusBar().showMessage(f"{self.index + 1} / {len(self.frames)}   {f.key}   ·   제외는 자동 저장됩니다 (curation.json)")
+        self.statusBar().showMessage(f"{self.index + 1} / {len(self.frames):,}   ·   세션 {f.session}   ·   제외 목록은 자동 저장됩니다")
         self.chart.set_data(self.chart.data, self.ws.steering.quantize(f.info.angle))
         for r in range(self.sessions_list.count()):
             it = self.sessions_list.item(r)
@@ -871,7 +900,7 @@ class MainWindow(QMainWindow):
     def _after_change(self, msg: str) -> None:
         self.ws.save()                                  # 바뀔 때마다 저장: 원본이 아니라 curation.json 만
         self._paint_strip_flags(); self._refresh_sessions(); self._show_current(); self._refresh_counts()
-        self.statusBar().showMessage(msg, 3000)
+        self.statusBar().showMessage(msg, 4000)
 
     def _change(self, sel: List[Frame], exclude: bool) -> None:
         touched = []
@@ -891,7 +920,7 @@ class MainWindow(QMainWindow):
             return
         self._change(sel, True)
         self.selected = set(); self.anchor = self.index
-        self._after_change(f"{len(sel)}장 제외")
+        self._after_change(f"{len(sel)}장을 제외했습니다  ·  Ctrl+Z 로 되돌리기")
 
     def restore_selection(self) -> None:
         sel = self._selection()
@@ -899,14 +928,14 @@ class MainWindow(QMainWindow):
             return
         self._change(sel, False)
         self.selected = set(); self.anchor = self.index
-        self._after_change(f"{len(sel)}장 복구")
+        self._after_change(f"{len(sel)}장을 복구했습니다  ·  Ctrl+Z 로 되돌리기")
 
     def toggle_current(self) -> None:
         if not self.frames:
             return
         f = self.frames[self.index]
         self._change([f], not self.ws.is_excluded(f))
-        self._after_change("제외" if self.ws.is_excluded(f) else "복구")
+        self._after_change("이 사진을 제외했습니다" if self.ws.is_excluded(f) else "이 사진을 복구했습니다")
 
     def undo(self) -> None:
         if not self._history:
@@ -915,27 +944,31 @@ class MainWindow(QMainWindow):
         for s in self._history.pop():
             if s in self.ws.curations:
                 self.ws.curations[s].undo()
-        self._after_change("되돌리기")
+        self._after_change("마지막 변경을 되돌렸습니다")
 
     # -- 데이터셋 ----------------------------------------------------------
     def build_dataset_dialog(self) -> None:
         if not self.frames:
             return
-        out = QFileDialog.getExistingDirectory(self, "데이터셋 zip 을 저장할 폴더", str(Path(self.cfg.recording.root)))
+        inc, exc = self.ws.counts()
+        if not sum(inc.values()):
+            self._notice("데이터셋 만들기", "포함된 사진이 없습니다", "제외한 사진을 복구(Insert)한 뒤 다시 만드세요.")
+            return
+        out = QFileDialog.getExistingDirectory(self, "데이터셋을 저장할 폴더", str(Path(self.cfg.recording.root)))
         if not out:
             return
-        inc, exc = self.ws.counts()
-        dlg = QProgressDialog("데이터셋 zip 쓰는 중…", None, 0, sum(inc.values()), self)
+        dlg = QProgressDialog(f"데이터셋 만드는 중…  ({sum(inc.values()):,}장)", None, 0, sum(inc.values()), self)
+        dlg.setWindowTitle("데이터셋 만들기")
         dlg.setWindowModality(Qt.WindowModal)
         dlg.show()
         try:
             path = build_dataset(self.ws, out, progress=lambda i, n: (dlg.setValue(i), QApplication.processEvents()))
-        except ValueError as e:
+        except (ValueError, OSError) as e:
             dlg.close()
-            QMessageBox.warning(self, "데이터셋", str(e))
+            self._notice("데이터셋 만들기", "데이터셋을 만들지 못했습니다", str(e))
             return
         dlg.close()
-        self.statusBar().showMessage(f"데이터셋 작성 완료: {path}", 8000)
+        self.statusBar().showMessage(f"데이터셋 작성 완료: {path.name}", 8000)
         BuildDoneDialog(path, sum(inc.values()), sum(exc.values()), len(self.ws.sessions), self).exec()
 
     def closeEvent(self, event) -> None:  # noqa: N802
