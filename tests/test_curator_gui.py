@@ -34,6 +34,14 @@ def test_session_when_reads_name_and_duration():
     assert session_when("something", {}) == ""
 
 
+def test_balance_note_names_the_extremes():
+    from curator.app import balance_note
+    assert balance_note([]) == ("", False)
+    assert balance_note([(30, 10, 0), (90, 80, 5), (150, 20, 0)]) == ("불균형 · 90° 가 30° 의 8.0배", True)
+    assert balance_note([(30, 10, 0), (90, 20, 0)]) == ("균형 양호 · 최다 90° 가 최소 30° 의 2.0배", False)
+    assert balance_note([(30, 0, 4), (90, 20, 0)]) == ("30° 사진이 없습니다", True)
+
+
 def test_runs_groups_consecutive_flags():
     assert runs([True, False, True, True, False, True]) == [(0, 0), (2, 3), (5, 5)]
     assert runs([]) == [] and runs([False]) == []

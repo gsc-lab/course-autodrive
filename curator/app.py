@@ -174,20 +174,45 @@ class FrameView(QWidget):
 
 # ---------------------------------------------------------------------------
 # 클래스 분포: 가로 막대. 한 줄 = 각도 | 막대(포함 파랑 + 제외 빨강) | 장수 | 비율. 점선 = 각도별 평균(균형 기준)
+# 카드 높이에 맞춰 줄 높이와 글자가 커지고, 맨 아래에 균형 판정 한 줄이 붙는다.
 # ---------------------------------------------------------------------------
+IMBALANCE_RATIO = 3.0        # 가장 많은 각도가 가장 적은 각도의 몇 배 이상이면 "불균형" 으로 알릴지
+
+
+def balance_note(data: List[Tuple[int, int, int]]) -> Tuple[str, bool]:
+    """(각도, 포함, 제외) 목록에서 균형 판정 한 줄과 경고 여부를 만든다."""
+    if not data or not sum(i for _, i, _ in data):
+        return "", False
+    lo = min(data, key=lambda r: r[1])
+    hi = max(data, key=lambda r: r[1])
+    if lo[1] == 0:
+        return f"{lo[0]}° 사진이 없습니다", True
+    ratio = hi[1] / lo[1]
+    if ratio >= IMBALANCE_RATIO:
+        return f"불균형 · {hi[0]}° 가 {lo[0]}° 의 {ratio:.1f}배", True
+    return f"균형 양호 · 최다 {hi[0]}° 가 최소 {lo[0]}° 의 {ratio:.1f}배", False
+
+
 class BarChart(QWidget):
-    ROW_H, TOP, BOTTOM = 34, 6, 22
+    ROW_MIN, ROW_MAX, TOP, BOTTOM = 32, 64, 6, 46
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.data: List[Tuple[int, int, int]] = []     # (각도, 포함, 제외)
         self.current: Optional[int] = None             # 현재 프레임의 클래스
-        self.setMinimumHeight(self.TOP + 5 * self.ROW_H + self.BOTTOM)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMinimumHeight(self.TOP + 5 * self.ROW_MIN + self.BOTTOM)
 
     def set_data(self, data: List[Tuple[int, int, int]], current: Optional[int]) -> None:
         self.data, self.current = data, current
-        self.setFixedHeight(self.TOP + max(1, len(data)) * self.ROW_H + self.BOTTOM)
+        n = max(1, len(data))
+        self.setMinimumHeight(self.TOP + n * self.ROW_MIN + self.BOTTOM)
+        self.setMaximumHeight(self.TOP + n * self.ROW_MAX + self.BOTTOM)
         self.update()
+
+    def row_height(self) -> float:
+        n = max(1, len(self.data))
+        return min(float(self.ROW_MAX), max(float(self.ROW_MIN), (self.height() - self.TOP - self.BOTTOM) / n))
 
     def paintEvent(self, event) -> None:  # noqa: N802
         p = QPainter(self)
@@ -195,24 +220,28 @@ class BarChart(QWidget):
         if not self.data:
             return
         w = self.width()
-        label_w, count_w, pct_w, gap = 42, 46, 52, 8
+        rh = self.row_height()
+        big = rh >= 38                                  # 자리가 넉넉하면 글자와 막대를 키운다
+        label_w, count_w, pct_w, gap = (50, 56, 62, 10) if big else (42, 46, 52, 8)
         x0 = label_w + gap
         track_w = w - x0 - gap - count_w - pct_w
         peak = max(1, max(i + e for _, i, e in self.data))
         total = sum(i for _, i, _ in self.data)
-        f_label = QFont(); f_label.setPointSize(10); f_label.setBold(True)
-        f_count = QFont(); f_count.setPointSize(10); f_count.setBold(True)
-        f_pct = QFont(); f_pct.setPointSize(10)
+        f_label = QFont(); f_label.setPointSize(13 if big else 10); f_label.setBold(True)
+        f_count = QFont(); f_count.setPointSize(13 if big else 10); f_count.setBold(True)
+        f_pct = QFont(); f_pct.setPointSize(11 if big else 10)
         f_small = QFont(); f_small.setPointSize(8)
+        f_note = QFont(); f_note.setPointSize(9); f_note.setBold(True)
+        bar_h = min(26.0, max(14.0, rh * 0.46))
         for k, (angle, inc, exc) in enumerate(self.data):
-            y = self.TOP + k * self.ROW_H
+            y = self.TOP + k * rh
             is_cur = angle == self.current
             if is_cur:                                   # 지금 보고 있는 사진의 각도: 줄 전체를 살짝 밝게
                 p.setPen(Qt.NoPen); p.setBrush(QColor(255, 196, 0, 26))
-                p.drawRoundedRect(QRectF(0, y + 2, w, self.ROW_H - 4), 6, 6)
+                p.drawRoundedRect(QRectF(0, y + 2, w, rh - 4), 6, 6)
             p.setFont(f_label); p.setPen(QColor(C_AMBER if is_cur else C_TEXT))
-            p.drawText(QRectF(4, y, label_w - 4, self.ROW_H), Qt.AlignVCenter | Qt.AlignRight, f"{angle}°")
-            bar = QRectF(x0, y + 9, track_w, self.ROW_H - 18)
+            p.drawText(QRectF(4, y, label_w - 4, rh), Qt.AlignVCenter | Qt.AlignRight, f"{angle}°")
+            bar = QRectF(x0, y + (rh - bar_h) / 2, track_w, bar_h)
             p.setPen(Qt.NoPen); p.setBrush(QColor("#30353f")); p.drawRoundedRect(bar, 4, 4)
             wi = track_w * inc / peak
             we = track_w * exc / peak
@@ -223,21 +252,30 @@ class BarChart(QWidget):
                 p.setBrush(QColor(C_DANGER))
                 p.drawRoundedRect(QRectF(bar.x() + wi, bar.y(), max(3.0, we), bar.height()), 3, 3)
             p.setFont(f_count); p.setPen(QColor(C_TEXT))
-            p.drawText(QRectF(x0 + track_w + gap, y, count_w, self.ROW_H), Qt.AlignVCenter | Qt.AlignRight, f"{inc:,}")
+            p.drawText(QRectF(x0 + track_w + gap, y, count_w, rh), Qt.AlignVCenter | Qt.AlignRight, f"{inc:,}")
             share = inc / total * 100 if total else 0.0
             p.setFont(f_pct); p.setPen(QColor("#c3cad6"))
-            p.drawText(QRectF(w - pct_w, y, pct_w - 4, self.ROW_H), Qt.AlignVCenter | Qt.AlignRight, f"{share:.1f}%")
+            p.drawText(QRectF(w - pct_w, y, pct_w - 4, rh), Qt.AlignVCenter | Qt.AlignRight, f"{share:.1f}%")
+        rows_h = len(self.data) * rh
+        if not total:
+            return
         # 균형 기준선: 각도별 평균 장수 (모든 막대가 이 선 근처면 균형이 맞는 것)
-        rows_h = len(self.data) * self.ROW_H
-        if total:
-            mean = total / len(self.data)
-            xm = x0 + track_w * mean / peak
-            p.setPen(QPen(QColor("#aab3c2"), 1, Qt.DashLine))
-            p.drawLine(QPointF(xm, self.TOP + 2), QPointF(xm, self.TOP + rows_h - 2))
-            p.setFont(f_small); p.setPen(QColor(C_MUTED))
-            text = f"평균 {mean:,.0f}장"
-            tw = p.fontMetrics().horizontalAdvance(text)
-            p.drawText(QRectF(min(max(x0, xm - tw / 2), x0 + track_w - tw), self.TOP + rows_h + 2, tw + 2, 16), Qt.AlignCenter, text)
+        mean = total / len(self.data)
+        xm = x0 + track_w * mean / peak
+        p.setPen(QPen(QColor("#aab3c2"), 1, Qt.DashLine))
+        p.drawLine(QPointF(xm, self.TOP + 2), QPointF(xm, self.TOP + rows_h - 2))
+        p.setFont(f_small); p.setPen(QColor(C_MUTED))
+        text = f"평균 {mean:,.0f}장"
+        tw = p.fontMetrics().horizontalAdvance(text)
+        p.drawText(QRectF(min(max(x0, xm - tw / 2), x0 + track_w - tw), self.TOP + rows_h + 2, tw + 2, 16), Qt.AlignCenter, text)
+        # 균형 판정 한 줄
+        note, warn = balance_note(self.data)
+        c = QColor(C_AMBER if warn else C_OK)
+        box = QRectF(0, self.TOP + rows_h + 22, w, 22)
+        bg = QColor(c); bg.setAlpha(30)
+        p.setPen(Qt.NoPen); p.setBrush(bg); p.drawRoundedRect(box, 6, 6)
+        p.setFont(f_note); p.setPen(c)
+        p.drawText(box, Qt.AlignCenter, note)
 
 
 # ---------------------------------------------------------------------------
@@ -735,14 +773,13 @@ class MainWindow(QMainWindow):
         self.summary = SummaryView(); lay.addWidget(self.summary)
         sl.addWidget(c)
 
-        c, lay = card("클래스 분포", "파랑 포함 · 빨강 제외 · 점선은 각도별 평균.<br>막대 길이가 비슷할수록 균형이 맞습니다.")
-        self.chart = BarChart(); lay.addWidget(self.chart)
-        sl.addWidget(c)
+        c, lay = card("클래스 분포", "파랑 포함 · 빨강 제외 · 점선은 각도별 평균")
+        self.chart = BarChart(); lay.addWidget(self.chart, 1); lay.addStretch(0)
+        sl.addWidget(c, 1)
 
-        c, lay = card("선택", "한꺼번에 제외·복구할 사진들. 임시 선택이라 저장되지 않는다.")
+        c, lay = card("선택")
         self.range_label = QLabel(); self.range_label.setObjectName("value"); self.range_label.setWordWrap(True)
         lay.addWidget(self.range_label); sl.addWidget(c)
-        sl.addStretch(1)
 
         mid = QHBoxLayout(); mid.setContentsMargins(0, 0, 0, 0); mid.setSpacing(0)
         mid.addWidget(left); mid.addWidget(self.view, 1); mid.addWidget(right)
@@ -990,9 +1027,9 @@ class MainWindow(QMainWindow):
             sess = {self.frames[i].session for i in self.selected}
             span = f" · 세션 {len(sess)}개에 걸침" if len(sess) > 1 else ""
             self.range_label.setText(f"<b style='color:#9cc2ff'>{n}장 선택</b> &nbsp;({where}{span})<br>"
-                                     f"<span style='color:{C_MUTED}'>Delete 로 제외, Insert 로 복구, Esc 로 해제</span>")
+                                     f"<span style='color:{C_MUTED}'><b>Delete</b> 제외 · <b>Insert</b> 복구 · <b>Esc</b> 해제</span>")
         else:
-            self.range_label.setText(f"<span style='color:{C_MUTED}'>선택 없음 — 제외·복구는 현재 한 장에 적용<br>"
+            self.range_label.setText(f"<span style='color:{C_MUTED}'>"
                                      "<b>Shift+←/→</b> 또는 <b>Shift+클릭</b>: 연속 선택<br>"
                                      "<b>Ctrl+클릭</b>: 떨어진 낱장 선택</span>")
 
