@@ -55,6 +55,7 @@ QPushButton#primary:hover {{ background: #5a97f8; }}
 QPushButton#danger {{ color: #ff8f8f; }}
 QPushButton#ghost {{ background: transparent; border-color: #5f7396; color: #dbe6f7; }}
 #side {{ background: {C_PANEL}; border-left: 1px solid {C_BORDER}; }}
+#sideLeft {{ background: {C_PANEL}; border-right: 1px solid {C_BORDER}; }}
 QFrame#card {{ background: {C_CARD}; border: 1px solid {C_BORDER}; border-radius: 8px; }}
 QFrame#card QLabel, QFrame#card QWidget {{ background: transparent; }}
 QLabel#cardTitle {{ font-weight: 700; font-size: 13px; }}
@@ -480,8 +481,8 @@ class MainWindow(QMainWindow):
         self._play.timeout.connect(self._play_tick)
         self.setWindowTitle(APP_TITLE)
         self.setStyleSheet(QSS)
-        self.resize(1360, 900)
-        self.setMinimumSize(1000, 680)
+        self.resize(1480, 920)
+        self.setMinimumSize(1180, 700)
         self._logo = QPixmap(str(LOGO_PATH)) if LOGO_PATH.exists() else QPixmap()
         if not self._logo.isNull():
             self.setWindowIcon(self._make_icon())
@@ -541,19 +542,29 @@ class MainWindow(QMainWindow):
         self.build_btn.setMinimumHeight(38)
         bl.addWidget(self.build_btn, 0, Qt.AlignBottom)
 
-        # 가운데: 사진 + 옆 패널
+        # 가운데: [왼쪽 = 무엇을 보고 있나 (세션, 현재 프레임)] [사진] [오른쪽 = 무엇이 데이터셋에 들어가나 (구성, 분포, 선택)]
         self.view = FrameView()
-        side_inner = QWidget(); side_inner.setObjectName("side")
-        sl = QVBoxLayout(side_inner); sl.setContentsMargins(12, 10, 12, 10); sl.setSpacing(8)
 
-        c, lay = card("세션")
-        c.setToolTip("세션 = 수집기를 한 번 실행해 찍은 폴더. 파일로 남으며, 여러 세션을 열어 한 데이터셋으로 합칠 수 있다.\n"
-                     "클릭하면 그 세션의 첫 사진으로 이동")
+        def panel(name: str, width: int) -> Tuple[QScrollArea, QVBoxLayout]:
+            inner = QWidget(); inner.setObjectName(name)
+            lay_ = QVBoxLayout(inner); lay_.setContentsMargins(12, 10, 12, 10); lay_.setSpacing(8)
+            area = QScrollArea(); area.setWidget(inner); area.setWidgetResizable(True)
+            area.setFixedWidth(width); area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            return area, lay_
+
+        left, ll = panel("sideLeft", 300)
+        c, lay = card("세션", "수집기를 한 번 실행해 찍은 폴더. 클릭하면 그 세션의 첫 사진으로 이동.")
         self.sessions_list = QListWidget(); self.sessions_list.setObjectName("sessions")
-        self.sessions_list.setFocusPolicy(Qt.NoFocus); self.sessions_list.setFixedHeight(50)
+        self.sessions_list.setFocusPolicy(Qt.NoFocus); self.sessions_list.setMinimumHeight(60)
         self.sessions_list.itemClicked.connect(self._on_session_clicked)
-        lay.addWidget(self.sessions_list); sl.addWidget(c)
+        lay.addWidget(self.sessions_list, 1); ll.addWidget(c, 1)            # 남는 높이는 세션 목록이 쓴다
 
+        c, lay = card("현재 프레임")
+        self.info = QLabel(); self.info.setObjectName("value"); self.info.setWordWrap(True)
+        self.info.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        lay.addWidget(self.info); ll.addWidget(c)
+
+        right, sl = panel("side", 348)
         c, lay = card("데이터셋 구성")
         self.summary = SummaryView(); lay.addWidget(self.summary)
         sl.addWidget(c)
@@ -565,17 +576,10 @@ class MainWindow(QMainWindow):
         c, lay = card("선택", "한꺼번에 제외·복구할 사진들. 임시 선택이라 저장되지 않는다.")
         self.range_label = QLabel(); self.range_label.setObjectName("value"); self.range_label.setWordWrap(True)
         lay.addWidget(self.range_label); sl.addWidget(c)
-
-        c, lay = card("현재 프레임")
-        self.info = QLabel(); self.info.setObjectName("value"); self.info.setWordWrap(True)
-        self.info.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        lay.addWidget(self.info); sl.addWidget(c)
         sl.addStretch(1)
-        side = QScrollArea(); side.setWidget(side_inner); side.setWidgetResizable(True)
-        side.setFixedWidth(372); side.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
         mid = QHBoxLayout(); mid.setContentsMargins(0, 0, 0, 0); mid.setSpacing(0)
-        mid.addWidget(self.view, 1); mid.addWidget(side)
+        mid.addWidget(left); mid.addWidget(self.view, 1); mid.addWidget(right)
 
         # 아래: 타임라인 + 필름스트립
         self.timeline = Timeline(); self.timeline.seek.connect(lambda i, shift: self.goto(i, extend=shift))
@@ -664,10 +668,9 @@ class MainWindow(QMainWindow):
             exc = len(self.ws.curations[s.name].excluded)
             chip = QPixmap(12, 28); chip.fill(QColor(self._session_color(s.name)))
             it = QListWidgetItem(QIcon(chip), f"{s.name}{'  (zip)' if s.is_zip else ''}\n"
-                                              f"{len(s.frames)}장 · 포함 {len(s.frames) - exc} · 제외 {exc} · □ 표시 {len(s.marks)}회")
+                                              f"{len(s.frames):,}장 · 제외 {exc} · □ {len(s.marks)}회")
             it.setData(Qt.UserRole, s.name)
             self.sessions_list.addItem(it)
-        self.sessions_list.setFixedHeight(min(3, max(1, len(self.ws.sessions))) * 48 + 4)   # 내용만큼만 (3개 넘으면 스크롤)
         if not self.ws.sessions:
             it = QListWidgetItem("열린 세션이 없습니다. ‘폴더 열기’ 로 추가하세요."); it.setFlags(Qt.NoItemFlags)
             self.sessions_list.addItem(it)
@@ -769,12 +772,10 @@ class MainWindow(QMainWindow):
         a, b = self._session_span[f.session]
         state = (f"<span style='color:{C_DANGER}'>제외 — {'□ 불량 표시 구간' if reason == REASON_MARK else '직접 제외'}</span>"
                  if reason else f"<span style='color:{C_OK}'>포함</span>")
-        self.info.setText(
-            f"<table cellspacing='3'>"
-            f"<tr><td style='color:{C_MUTED}'>파일</td><td>{f.name}</td></tr>"
-            f"<tr><td style='color:{C_MUTED}'>세션</td><td>{f.session} &nbsp;({self.index - a + 1} / {b - a + 1})</td></tr>"
-            f"<tr><td style='color:{C_MUTED}'>라벨</td><td>조향 {f.info.angle}° · 속도 {f.info.speed}%</td></tr>"
-            f"<tr><td style='color:{C_MUTED}'>상태</td><td>{state}</td></tr></table>")
+        def row(label: str, value: str) -> str:
+            return f"<div style='color:{C_MUTED}; font-size:11px; margin-top:6px'>{label}</div><div>{value}</div>"
+        self.info.setText(row("파일", f.name) + row("세션", f"{f.session} &nbsp;({self.index - a + 1} / {b - a + 1})")
+                          + row("라벨", f"조향 {f.info.angle}° · 속도 {f.info.speed}%") + row("상태", state))
         self.statusBar().showMessage(f"{self.index + 1} / {len(self.frames)}   {f.key}   ·   제외는 자동 저장됩니다 (curation.json)")
         self.chart.set_data(self.chart.data, self.ws.steering.quantize(f.info.angle))
         for r in range(self.sessions_list.count()):
