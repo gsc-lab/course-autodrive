@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -64,8 +65,11 @@ QLabel#cardTitle {{ font-weight: 700; font-size: 13px; }}
 QLabel#hint {{ color: {C_MUTED}; font-size: 11px; }}
 QLabel#value {{ font-size: 13px; }}
 QListWidget {{ background: transparent; border: none; outline: none; }}
-QListWidget#sessions::item {{ padding: 6px 4px; border-radius: 6px; }}
-QListWidget#sessions::item:selected {{ background: #313a4d; color: {C_TEXT}; }}
+QListWidget#sessions::item {{ border: 1px solid {C_BORDER}; border-radius: 8px; margin-bottom: 6px; background: #20242d; }}
+QListWidget#sessions::item:hover {{ border-color: #55607a; }}
+QListWidget#sessions::item:selected {{ background: #2c3446; border: 1px solid {C_ACCENT}; }}
+QLabel#sessName {{ font-weight: 700; font-size: 13px; }}
+QLabel#statValue {{ font-weight: 700; font-size: 14px; }}
 QListWidget#strip {{ background: {C_PANEL}; border-top: 1px solid {C_BORDER}; }}
 QListWidget#strip::item {{ color: {C_MUTED}; border: 2px solid transparent; border-radius: 4px; }}
 QListWidget#strip::item:selected {{ border: 2px solid {C_AMBER}; color: {C_TEXT}; background: #2b3140; }}
@@ -452,6 +456,50 @@ class BuildDoneDialog(QDialog):
         self.accept()
 
 
+def session_when(name: str, meta: dict) -> str:
+    """세션 이름(YYYYMMDD_HHMM)과 메타에서 '11월 10일 19:06 · 16분 주행' 같은 한 줄을 만든다."""
+    try:
+        t = datetime.strptime(name[:13], "%Y%m%d_%H%M")
+        text = f"{t.month}월 {t.day}일 {t:%H:%M} 촬영"
+    except ValueError:
+        return ""
+    try:
+        sec = (datetime.fromisoformat(meta["ended_at"]) - datetime.fromisoformat(meta["started_at"])).total_seconds()
+        if sec >= 60:
+            text += f" · {round(sec / 60)}분 주행"
+    except (KeyError, TypeError, ValueError):
+        pass
+    return text
+
+
+class SessionItem(QWidget):
+    """세션 한 개의 카드: 색 띠(타임라인과 같은 색), 이름, 촬영 시각, 숫자 세 개(사진·제외·주행 중 불량 표시)."""
+
+    def __init__(self, name: str, when: str, color: str, frames: int, excluded: int, marks: int, is_zip: bool, parent=None):
+        super().__init__(parent)
+        self.setToolTip("사진: 이 세션에 저장된 장수\n제외: 데이터셋에서 빼기로 한 장수\n"
+                        "불량 표시: 주행 중 패드의 □ 버튼을 누른 횟수 (누를 때마다 직전 3초가 자동으로 제외된다)")
+        row = QHBoxLayout(self); row.setContentsMargins(0, 0, 10, 0); row.setSpacing(10)
+        bar = QFrame(); bar.setFixedWidth(5)
+        bar.setStyleSheet(f"background:{color}; border-top-left-radius:7px; border-bottom-left-radius:7px;")
+        row.addWidget(bar)
+        col = QVBoxLayout(); col.setContentsMargins(0, 8, 0, 8); col.setSpacing(2)
+        title = QLabel(name + ("  ·  zip" if is_zip else "")); title.setObjectName("sessName")
+        col.addWidget(title)
+        if when:
+            w = QLabel(when); w.setObjectName("hint"); col.addWidget(w)
+        col.addStretch(1)
+        stats = QHBoxLayout(); stats.setContentsMargins(0, 4, 0, 0); stats.setSpacing(0)
+        for value, label, c in ((f"{frames:,}", "사진", C_TEXT), (f"{excluded:,}", "제외", C_DANGER if excluded else C_MUTED),
+                                (f"{marks}회", "불량 표시 □", C_AMBER if marks else C_MUTED)):
+            box = QVBoxLayout(); box.setSpacing(0)
+            v = QLabel(value); v.setObjectName("statValue"); v.setStyleSheet(f"color:{c};")
+            n = QLabel(label); n.setObjectName("hint")
+            box.addWidget(v); box.addWidget(n); stats.addLayout(box, 1)
+        col.addLayout(stats)
+        row.addLayout(col, 1)
+
+
 def card(title: str, hint: str = "") -> Tuple[QFrame, QVBoxLayout]:
     f = QFrame(); f.setObjectName("card")
     lay = QVBoxLayout(f); lay.setContentsMargins(12, 10, 12, 12); lay.setSpacing(6)
@@ -555,7 +603,7 @@ class MainWindow(QMainWindow):
             return area, lay_
 
         left, ll = panel("sideLeft", 300)
-        c, lay = card("세션", "수집기를 한 번 실행해 찍은 폴더. 클릭하면 그 세션의 첫 사진으로 이동.")
+        c, lay = card("세션", "수집기를 한 번 실행해 찍은 폴더.<br>클릭하면 그 세션의 첫 사진으로 이동합니다.")
         self.sessions_list = QListWidget(); self.sessions_list.setObjectName("sessions")
         self.sessions_list.setFocusPolicy(Qt.NoFocus); self.sessions_list.setMinimumHeight(60)
         self.sessions_list.itemClicked.connect(self._on_session_clicked)
@@ -695,11 +743,13 @@ class MainWindow(QMainWindow):
         self.sessions_list.clear()
         for s in sorted(self.ws.sessions, key=lambda s: s.name):
             exc = len(self.ws.curations[s.name].excluded)
-            chip = QPixmap(12, 28); chip.fill(QColor(self._session_color(s.name)))
-            it = QListWidgetItem(QIcon(chip), f"{s.name}{'  (zip)' if s.is_zip else ''}\n"
-                                              f"{len(s.frames):,}장 · 제외 {exc} · □ {len(s.marks)}회")
+            w = SessionItem(s.name, session_when(s.name, s.meta), self._session_color(s.name),
+                            len(s.frames), exc, len(s.marks), s.is_zip)
+            it = QListWidgetItem()
             it.setData(Qt.UserRole, s.name)
+            it.setSizeHint(QSize(0, 98))                  # 이름 + 촬영 시각 + 숫자 줄 + 아래 여백
             self.sessions_list.addItem(it)
+            self.sessions_list.setItemWidget(it, w)
         if not self.ws.sessions:
             it = QListWidgetItem("열린 세션이 없습니다. ‘폴더 열기’ 로 추가하세요."); it.setFlags(Qt.NoItemFlags)
             self.sessions_list.addItem(it)

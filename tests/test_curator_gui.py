@@ -26,6 +26,14 @@ def test_arrow_rotation_sign_and_limits():
     assert arrow_rotation_deg(0.5, 60, True) == -30
 
 
+def test_session_when_reads_name_and_duration():
+    from curator.app import session_when
+    meta = {"started_at": "2026-11-10T19:06:23", "ended_at": "2026-11-10T19:22:23"}
+    assert session_when("20261110_1906", meta) == "11월 10일 19:06 촬영 · 16분 주행"
+    assert session_when("20261110_1908_2", {}) == "11월 10일 19:08 촬영"
+    assert session_when("something", {}) == ""
+
+
 def test_runs_groups_consecutive_flags():
     assert runs([True, False, True, True, False, True]) == [(0, 0), (2, 3), (5, 5)]
     assert runs([]) == [] and runs([False]) == []
