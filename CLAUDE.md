@@ -16,9 +16,10 @@ it exists only as a local reference on the professor's PC, and the old code rema
 commit `d2e0de0`. Do not extend it, do not reuse its hardware code, and do not treat its conventions as binding.
 
 Hardware bring-up (2026-11-09): servo (PCA9685 0x40 CH0) and both motors (PCA9685 0x41 CH0/CH1 → MDD10A) were
-verified on the reference car with `scripts/pin_test.py servo` / `motor 15`, and a first real `collector` drive with the
-DualShock 4 worked. Not yet done: confirming `dir_forward_high` / `steering.invert` on the track, and a hardware stop for
-I2C loss (PCA9685 has no watchdog; the car has no main switch, so pulling the battery connector is the only stop).
+verified on the reference car with `scripts/pin_test.py servo` / `motor 15`. Track drives with the DualShock 4 on
+2026-11-10 and 2026-11-17 worked with the default `dir_forward_high` / `steering.invert` / speed levels (user: "문제 없어").
+Still open: a hardware stop for I2C loss (PCA9685 has no watchdog; the car has no main switch, so pulling the battery
+connector is the only stop), and an on-track check of the three 2026-11-10 safety guards (Wi-Fi off / pad off / double start).
 
 Current repo state (2026-11-10): `config.yaml`, `common/`, `collector/` and `tests/` exist and pass
 `pytest`; `curator/`, `trainer/`, `inference/` are not written yet. `docs/jetson-setup.md` holds the
