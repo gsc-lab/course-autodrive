@@ -214,7 +214,7 @@ without side effects at import time (no device opens, no terminal mode changes a
 PySide6 desktop app. Open one or more session folders or zips; show one frame at a time with angle/speed
 parsed from the filename and the steering angle drawn as an arrow (direction/scale from config, with an
 invert flag); thumbnail filmstrip and a timeline (session boundaries, excluded, selection, cursor); ←/→ step,
-PageUp/PageDown ×10, Home/End, auto-play; Explorer-style selection (Shift+arrows / Shift+click contiguous, Ctrl+click
+PageUp/PageDown ×10, Home/End, auto-play at 1×/2×/5×/10× of the real capture interval (segmented buttons or + / -, default `curator.autoplay_speed` 2); Explorer-style selection (Shift+arrows / Shift+click contiguous, Ctrl+click
 individual, Esc clears — the `[` `]` range keys were dropped on 2026-11-17 at the user's request), Delete excludes /
 Insert restores the selection; Ctrl+Z undo; frames inside `marks.csv` intervals are pre-flagged; live per-class
 counts and ratios; "데이터셋 만들기" writes the zip described above.
