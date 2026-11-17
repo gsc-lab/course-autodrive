@@ -42,6 +42,14 @@ def test_balance_note_names_the_extremes():
     assert balance_note([(30, 0, 4), (90, 20, 0)]) == ("30° 사진이 없습니다", True)
 
 
+def test_play_delay_follows_capture_interval_and_speed():
+    from curator.app import play_delay_ms
+    assert play_delay_ms(0.5, 1) == 500 and play_delay_ms(0.5, 5) == 100 and play_delay_ms(0.5, 10) == 50
+    assert play_delay_ms(0.2, 2) == 100
+    assert play_delay_ms(30.0, 1) == 1000          # 멈췄다 달린 공백·세션 경계는 1초만 기다린다
+    assert play_delay_ms(0.0, 10) == 15
+
+
 def test_runs_groups_consecutive_flags():
     assert runs([True, False, True, True, False, True]) == [(0, 0), (2, 3), (5, 5)]
     assert runs([]) == [] and runs([False]) == []
@@ -63,6 +71,12 @@ def test_window_opens_navigates_excludes_and_builds(qapp, tmp_path):
         assert (info["in_session"], info["session_len"], info["overall"], info["total"]) == (6, 12, 6, 12)
         assert info["angle"] == 30 and info["side"] == -1.0 and info["speed"] == 45 and info["reason"] is None   # 5번 = 30°(왼쪽 끝)
         win.goto(2); assert win.info.d["reason"] == "mark"                   # □ 구간이라 미리 제외된 사진
+        assert win.speed == 5 and win.speed_btn.text() == "5×"                # 처음 값 = config 의 autoplay_speed
+        win.cycle_speed(); assert win.speed == 10
+        win.cycle_speed(); assert win.speed == 1 and win.speed_btn.text() == "1×"     # 10 다음은 다시 1
+        win.step_speed(-1); assert win.speed == 1                           # 끝에서는 그대로
+        win.step_speed(1); assert win.speed == 2
+        win.goto(0); assert win._play_delay() == 250                        # 0.5초 간격 ÷ 2배
         win.goto(99); assert win.index == 11                                # 끝에서 멈춤
         win.goto(-3); assert win.index == 0
         win.goto(6); win.goto(8, extend=True)                               # Shift+→ 두 번: 6~8 연속 선택

@@ -87,7 +87,7 @@ QToolTip {{ background: #0b0d11; color: {C_TEXT}; border: 1px solid {C_BORDER}; 
 
 SHORTCUTS = [
     ("이동", [("←  /  →", "한 장 앞뒤"), ("PageUp / PageDown", "10장 앞뒤"), ("Home / End", "처음 / 끝"),
-            ("Space", "자동 재생 · 정지"), ("타임라인 클릭·끌기", "그 위치로 이동")]),
+            ("Space", "자동 재생 · 정지"), ("+  /  -", "재생 배속 올리기 · 내리기 (1 · 2 · 5 · 10배, 1배 = 실제 주행 속도)"), ("타임라인 클릭·끌기", "그 위치로 이동")]),
     ("선택", [("Shift + ← / →", "연속으로 선택 넓히기 (PageUp/Down, Home/End 도 가능)"),
             ("Shift + 클릭", "현재 장부터 클릭한 장까지 연속 선택"), ("Ctrl + 클릭", "떨어진 사진을 낱장으로 선택·해제"),
             ("Ctrl+A", "전체 선택"), ("Esc", "선택 해제")]),
@@ -655,6 +655,16 @@ class SessionItem(QWidget):
         row.addLayout(col, 1)
 
 
+PLAY_SPEEDS = (1, 2, 5, 10)          # 재생 배속. 1 = 실제 촬영 시간 그대로
+PLAY_GAP_MAX_SEC = 1.0               # 멈췄다 다시 달린 곳·세션 경계의 긴 공백은 이만큼만 기다린다
+
+
+def play_delay_ms(dt_sec: float, speed: float) -> int:
+    """다음 사진까지 기다릴 시간(ms): 두 사진의 실제 촬영 간격을 배속으로 나눈다."""
+    dt = min(PLAY_GAP_MAX_SEC, max(0.05, dt_sec))
+    return max(15, round(dt / speed * 1000))
+
+
 def card(title: str, hint: str = "") -> Tuple[QFrame, QVBoxLayout]:
     f = QFrame(); f.setObjectName("card")
     lay = QVBoxLayout(f); lay.setContentsMargins(12, 10, 12, 12); lay.setSpacing(6)
@@ -741,7 +751,11 @@ class MainWindow(QMainWindow):
                           self._btn("복구", "선택한 사진(없으면 현재 장)을 다시 포함 (Insert)", self.restore_selection),
                           self._btn("되돌리기", "마지막 제외/복구 되돌리기 (Ctrl+Z)", self.undo)])
         self.play_btn = self._btn("▶ 재생", "자동 재생 · 정지 (Space)", self.toggle_play)
-        group("보기", [self.play_btn])
+        self.speed_btn = self._btn("", "재생 배속: 1배 = 실제 주행 속도. 누르면 1 → 2 → 5 → 10배 순으로 바뀐다 (+ / -)",
+                                   self.cycle_speed)
+        self.speed_btn.setFixedWidth(52)
+        self.set_speed(self.cfg.curator.autoplay_speed)
+        group("보기", [self.play_btn, self.speed_btn])
         bl.addStretch(1)
         self.build_btn = self._btn("데이터셋 만들기", "포함된 사진으로 dataset_*.zip 생성 (Ctrl+B)", self.build_dataset_dialog, "primary")
         self.build_btn.setMinimumHeight(38)
@@ -805,6 +819,7 @@ class MainWindow(QMainWindow):
                         ("Ctrl+B", self.build_dataset_dialog), ("Delete", self.exclude_selection),
                         ("Insert", self.restore_selection), ("X", self.toggle_current), ("Ctrl+Z", self.undo),
                         ("Space", self.toggle_play), ("F1", self.show_shortcuts),
+                        ("+", lambda: self.step_speed(1)), ("=", lambda: self.step_speed(1)), ("-", lambda: self.step_speed(-1)),
                         ("Ctrl+A", self.select_all), ("Escape", self.clear_selection)):
             a = QAction(self); a.setShortcut(QKeySequence(key)); a.triggered.connect(fn); self.addAction(a)
         moves = (("Left", lambda: self.index - 1), ("Right", lambda: self.index + 1), ("PgUp", lambda: self.index - 10),
@@ -1087,13 +1102,35 @@ class MainWindow(QMainWindow):
         if self._play.isActive():
             self._play.stop(); self.play_btn.setText("▶ 재생")
         elif self.frames:
-            self._play.start(int(1000 / self.cfg.curator.autoplay_fps)); self.play_btn.setText("■ 정지")
+            self._play.start(self._play_delay()); self.play_btn.setText("■ 정지")
+
+    def _play_delay(self) -> int:
+        """지금 사진에서 다음 사진까지의 실제 촬영 간격을 배속으로 나눈 시간(ms)."""
+        if self.index >= len(self.frames) - 1:
+            return play_delay_ms(PLAY_GAP_MAX_SEC, self.speed)
+        a, b = self.frames[self.index], self.frames[self.index + 1]
+        return play_delay_ms((b.info.timestamp - a.info.timestamp).total_seconds(), self.speed)
 
     def _play_tick(self) -> None:
         if self.index >= len(self.frames) - 1:
             self._play.stop(); self.play_btn.setText("▶ 재생")
         else:
             self.goto(self.index + 1)
+            self._play.setInterval(self._play_delay())
+
+    def set_speed(self, speed: float) -> None:
+        self.speed = min(PLAY_SPEEDS, key=lambda v: abs(v - speed))
+        self.speed_btn.setText(f"{self.speed}×")
+        if self._play.isActive():
+            self._play.setInterval(self._play_delay())
+
+    def cycle_speed(self) -> None:
+        self.set_speed(PLAY_SPEEDS[(PLAY_SPEEDS.index(self.speed) + 1) % len(PLAY_SPEEDS)])
+
+    def step_speed(self, step: int) -> None:
+        k = min(len(PLAY_SPEEDS) - 1, max(0, PLAY_SPEEDS.index(self.speed) + step))
+        self.set_speed(PLAY_SPEEDS[k])
+        self.statusBar().showMessage(f"재생 배속 {self.speed}× (1× = 실제 주행 속도)", 2500)
 
     # -- 제외·복구 ---------------------------------------------------------
     def _selection(self) -> List[Frame]:

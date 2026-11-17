@@ -158,7 +158,7 @@ class CuratorConfig:
     arrow_max_deg: float = 60.0     # 조향 끝(steering.min/max)일 때 화살표가 기울어지는 각도
     arrow_invert: bool = False      # 화살표가 실제 차의 방향과 반대로 보이면 true (steering.invert 와 별개)
     thumb_px: int = 96              # 필름스트립 썸네일 크기
-    autoplay_fps: float = 10.0      # 자동 재생 속도
+    autoplay_speed: float = 5.0     # 자동 재생 배속의 처음 값 (실제 촬영 시간 기준. 1, 2, 5, 10 중 하나)
 
 
 @dataclass
@@ -312,8 +312,8 @@ def validate(cfg: Config) -> None:
         raise ConfigError("display.blink_hz 는 0.2~10 이어야 합니다")
 
     cu = cfg.curator
-    if not (1 <= cu.arrow_max_deg <= 90) or cu.thumb_px < 32 or not (1 <= cu.autoplay_fps <= 60):
-        raise ConfigError("curator 설정 범위: arrow_max_deg 1~90, thumb_px ≥ 32, autoplay_fps 1~60")
+    if not (1 <= cu.arrow_max_deg <= 90) or cu.thumb_px < 32 or cu.autoplay_speed not in (1, 2, 5, 10):
+        raise ConfigError("curator 설정 범위: arrow_max_deg 1~90, thumb_px ≥ 32, autoplay_speed 1·2·5·10 중 하나")
 
     if cfg.input.primary not in ("ds4", "keyboard"):
         raise ConfigError("input.primary 는 ds4 또는 keyboard 여야 합니다")
