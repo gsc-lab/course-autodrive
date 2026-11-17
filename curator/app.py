@@ -758,7 +758,7 @@ class MainWindow(QMainWindow):
             return area, lay_
 
         left, ll = panel("sideLeft", 300)
-        c, lay = card("세션", "수집기를 한 번 실행해 찍은 폴더.<br>클릭하면 그 세션의 첫 사진으로 이동합니다.")
+        c, lay = card("세션", "수집기를 한 번 실행해 저장한 사진 폴더입니다.<br>클릭하면 해당 폴더의 첫 사진으로 이동합니다.")
         self.sessions_list = QListWidget(); self.sessions_list.setObjectName("sessions")
         self.sessions_list.setFocusPolicy(Qt.NoFocus); self.sessions_list.setMinimumHeight(60)
         self.sessions_list.itemClicked.connect(self._on_session_clicked)
