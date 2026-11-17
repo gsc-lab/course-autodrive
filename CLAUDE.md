@@ -222,6 +222,14 @@ individual, Esc clears — the `[` `]` range keys were dropped on 2026-11-17 at 
 Insert restores the selection; Ctrl+Z undo; frames inside `marks.csv` intervals are pre-flagged; live per-class
 counts and ratios; "데이터셋 만들기" writes the zip described above.
 
+Robustness rules added by the 2026-11-17 code review (`tests/test_curator_robustness.py`): a session that ended by power
+loss has **0-byte JPEGs at its tail** (27 each in `20261110_1842` and `20261110_1908_2`, also 0 bytes on the Jetson), so
+`SessionSource` leaves 0-byte frames out (`.empty`) and `build_dataset` refuses a half-written image (`BrokenImage`, checked
+by head/tail markers) instead of shipping it to the trainer; the zip is written to `*.part` and renamed, so a failed build
+leaves nothing behind; thumbnail results carry a generation number because frame indices shift when another session is
+opened; a failed `curation.json` write (read-only folder, sync lock) is reported in the status bar and never blocks editing
+or closing. Open: the collector does not fsync frames, so the last ~13 s before a power cut are lost.
+
 ## Legacy notes (`legacy/`, untracked local reference only — also in git history before `d2e0de0`)
 
 Old pipeline: `legacy/datacollector/img-collector.py` → `img-cleaner.py` → `legacy/training/train_pilotnet.py`

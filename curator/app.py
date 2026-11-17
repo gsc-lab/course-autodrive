@@ -2,8 +2,8 @@
 
   uv run -m curator [세션 폴더 또는 zip ...]
 
-화면: 머리띠(로고·제목) → 도구 막대 → [사진 + 조향 화살표 | 옆 패널(세션, 구간 선택, 클래스 분포, 현재 프레임)]
-      → 타임라인(세션 경계·제외·구간·현재 위치를 한 줄에) → 필름스트립.
+화면: 머리띠(로고·제목) → 도구 막대 → [왼쪽(세션, 현재 프레임) | 사진 + 조향 화살표 | 오른쪽(데이터셋 구성, 클래스 분포, 선택)]
+      → 타임라인(세션 경계·제외·선택·현재 위치를 한 줄에) → 필름스트립.
 용어: 세션 = 수집기를 한 번 실행해 생긴 폴더(파일로 남는다). 선택 = 한꺼번에 제외/복구하려고 고른 사진들(임시, 저장 안 됨).
 선택은 탐색기와 같다: Shift+←/→ 또는 Shift+클릭 = 연속, Ctrl+클릭 = 떨어진 낱장, Esc = 해제.
 제외 상태는 바뀔 때마다 세션 옆 curation.json 에 저장된다. 원본 사진은 건드리지 않는다. 단축키는 F1.
@@ -25,10 +25,11 @@ from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QFrame, QGrid
                                QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QProgressDialog, QPushButton,
                                QScrollArea, QSizePolicy, QVBoxLayout, QWidget)
 
-from common.config import Config
 import zipfile
 
-from curator.core import REASON_MARK, AlreadyOpen, Frame, NoFrames, SessionSource, Workspace, build_dataset
+from common.config import Config
+from curator.core import (REASON_MARK, AlreadyOpen, BrokenImage, Frame, NoFrames, SessionSource, Workspace,
+                          build_dataset, image_is_complete)
 
 log = logging.getLogger("curator")
 
@@ -132,11 +133,14 @@ class FrameView(QWidget):
         self.rotation = 0.0
         self.caption = ""
         self.excluded_reason: Optional[str] = None
+        self.message = ""               # 사진이 없을 때 대신 보일 글 (비면 '세션 폴더를 여세요')
         self.setMinimumSize(360, 270)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-    def set_frame(self, pixmap: Optional[QPixmap], rotation: float, caption: str, excluded_reason: Optional[str]) -> None:
+    def set_frame(self, pixmap: Optional[QPixmap], rotation: float, caption: str, excluded_reason: Optional[str],
+                  message: str = "") -> None:
         self.pixmap, self.rotation, self.caption, self.excluded_reason = pixmap, rotation, caption, excluded_reason
+        self.message = message
         self.update()
 
     def paintEvent(self, event) -> None:  # noqa: N802 (Qt 이름)
@@ -145,7 +149,7 @@ class FrameView(QWidget):
         if self.pixmap is None:
             p.setPen(QColor(C_MUTED))
             f = QFont(); f.setPointSize(12); p.setFont(f)
-            p.drawText(self.rect(), Qt.AlignCenter, "세션 폴더를 여세요  (Ctrl+O)")
+            p.drawText(self.rect(), Qt.AlignCenter, self.message or "세션 폴더를 여세요  (Ctrl+O)")
             return
         scaled = self.pixmap.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
         x = (self.width() - scaled.width()) // 2
@@ -515,13 +519,14 @@ class Timeline(QWidget):
 # 썸네일을 뒤에서 만든다
 # ---------------------------------------------------------------------------
 class ThumbWorker(QObject):
-    ready = Signal(int, QImage)
+    ready = Signal(int, int, QImage)        # (세대, 프레임 번호, 그림)
     finished = Signal()
 
-    def __init__(self, jobs: List[tuple], thumb_px: int):
+    def __init__(self, jobs: List[tuple], thumb_px: int, gen: int = 0):
         super().__init__()
         self.jobs = jobs            # (index, 세션 경로, 파일 이름)
         self.thumb_px = thumb_px
+        self.gen = gen              # 프레임 목록이 바뀌면 번호가 밀리므로, 받는 쪽이 지난 세대의 결과를 버린다
         self._stop = False
 
     def stop(self) -> None:
@@ -533,13 +538,16 @@ class ThumbWorker(QObject):
             for idx, spath, name in self.jobs:
                 if self._stop:
                     break
-                src = sources.get(spath)
-                if src is None:
-                    src = sources[spath] = SessionSource(spath)     # 스레드 전용 핸들 (zip 은 스레드 안전하지 않다)
-                img = QImage.fromData(src.read_bytes(name))
+                try:
+                    src = sources.get(spath)
+                    if src is None:
+                        src = sources[spath] = SessionSource(spath)     # 스레드 전용 핸들 (zip 은 스레드 안전하지 않다)
+                    img = QImage.fromData(src.read_bytes(name))
+                except (OSError, KeyError, zipfile.BadZipFile):     # 한 장을 못 읽어도 나머지는 계속
+                    continue
                 if not img.isNull():
                     img = img.scaled(self.thumb_px, self.thumb_px, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                self.ready.emit(idx, img)
+                self.ready.emit(self.gen, idx, img)
         finally:
             for s in sources.values():
                 s.close()
@@ -635,10 +643,12 @@ def session_when(name: str, meta: dict) -> str:
 class SessionItem(QWidget):
     """세션 한 개의 카드: 색 띠(타임라인과 같은 색), 이름, 촬영 시각, 숫자 세 개(사진·제외·주행 중 불량 표시)."""
 
-    def __init__(self, name: str, when: str, color: str, frames: int, excluded: int, marks: int, is_zip: bool, parent=None):
+    def __init__(self, name: str, when: str, color: str, frames: int, excluded: int, marks: int, is_zip: bool,
+                 empty: int = 0, parent=None):
         super().__init__(parent)
         self.setToolTip("사진: 이 세션에 저장된 장수\n제외: 데이터셋에서 빼기로 한 장수\n"
-                        "불량 표시: 주행 중 패드의 □ 버튼을 누른 횟수 (누를 때마다 직전 3초가 자동으로 제외된다)")
+                        "불량 표시: 주행 중 패드의 □ 버튼을 누른 횟수 (누를 때마다 직전 3초가 자동으로 제외된다)"
+                        + (f"\n\n빈 사진 {empty}장은 목록에서 뺐습니다 (전원이 끊겨 저장되지 못한 사진)" if empty else ""))
         row = QHBoxLayout(self); row.setContentsMargins(0, 0, 10, 0); row.setSpacing(10)
         bar = QFrame(); bar.setFixedWidth(5)
         bar.setStyleSheet(f"background:{color}; border-top-left-radius:7px; border-bottom-left-radius:7px;")
@@ -670,6 +680,13 @@ def play_delay_ms(dt_sec: float, speed: float) -> int:
     return max(15, round(dt / speed * 1000))
 
 
+def _reason(e: Exception) -> str:
+    """알림에 넣을 짧은 이유. OSError 의 기본 글에는 전체 경로가 붙으므로 설명만 꺼낸다."""
+    if isinstance(e, OSError) and e.strerror:
+        return e.strerror
+    return str(e) or type(e).__name__
+
+
 def card(title: str, hint: str = "") -> Tuple[QFrame, QVBoxLayout]:
     f = QFrame(); f.setObjectName("card")
     lay = QVBoxLayout(f); lay.setContentsMargins(12, 10, 12, 12); lay.setSpacing(6)
@@ -697,6 +714,8 @@ class MainWindow(QMainWindow):
         self._session_span: Dict[str, Tuple[int, int]] = {}
         self._thumb_thread: Optional[QThread] = None
         self._thumb_worker: Optional[ThumbWorker] = None
+        self._thumb_gen = 0                                 # 썸네일 작업의 세대 (프레임 목록이 바뀔 때마다 +1)
+        self._retired: List[tuple] = []                     # 제때 멈추지 못한 (스레드, 작업자). 끝날 때까지 참조를 쥔다
         self._play = QTimer(self)
         self._play.timeout.connect(self._play_tick)
         self.setWindowTitle(APP_TITLE)
@@ -867,11 +886,14 @@ class MainWindow(QMainWindow):
             except zipfile.BadZipFile:
                 problems.append(f"{name} — 열 수 없는 zip 입니다")
             except (ValueError, OSError) as e:
-                problems.append(f"{name} — {e}")
+                problems.append(f"{name} — {_reason(e)}")
         self._refresh_all()
         if opened:
             self.goto(self._session_span[opened[0].name][0])
-            self.statusBar().showMessage(f"세션 {len(opened)}개를 열었습니다 (사진 {sum(len(s.frames) for s in opened):,}장)", 4000)
+            empty = sum(len(s.empty) for s in opened)
+            extra = f"  ·  저장되지 못한 빈 사진 {empty:,}장은 뺐습니다" if empty else ""
+            self.statusBar().showMessage(f"세션 {len(opened)}개를 열었습니다 (사진 {sum(len(s.frames) for s in opened):,}장){extra}",
+                                         10000 if empty else 4000)
         elif already and not problems:                      # 오류가 아니다: 그 세션으로 데려다주기만 한다
             self.goto(self._session_span[already[0]][0])
             self.statusBar().showMessage(f"이미 열려 있는 세션입니다: {', '.join(already)}", 4000)
@@ -889,9 +911,19 @@ class MainWindow(QMainWindow):
         if f:
             self.open_paths([f])
 
+    SAVE_FAILED = "제외 목록을 저장하지 못했습니다 (폴더가 읽기 전용인지 확인하세요). 변경은 화면에만 남아 있습니다"
+
+    def _save(self) -> bool:
+        """curation.json 저장. 실패해도 프로그램은 계속 쓴다 (읽기 전용 폴더, 동기화 프로그램이 잡고 있는 파일)."""
+        try:
+            self.ws.save()
+            return True
+        except OSError as e:
+            log.warning("제외 목록 저장 실패: %s", e)
+            return False
+
     def save(self) -> None:
-        self.ws.save()
-        self.statusBar().showMessage("제외 목록을 저장했습니다", 2000)
+        self.statusBar().showMessage("제외 목록을 저장했습니다" if self._save() else self.SAVE_FAILED, 4000)
 
     def _session_color(self, name: str) -> str:
         names = sorted(s.name for s in self.ws.sessions)
@@ -921,9 +953,9 @@ class MainWindow(QMainWindow):
     def _refresh_sessions(self) -> None:
         self.sessions_list.clear()
         for s in sorted(self.ws.sessions, key=lambda s: s.name):
-            exc = len(self.ws.curations[s.name].excluded)
+            exc = sum(1 for f in s.frames if self.ws.is_excluded(f))
             w = SessionItem(s.name, session_when(s.name, s.meta), self._session_color(s.name),
-                            len(s.frames), exc, len(s.marks), s.is_zip)
+                            len(s.frames), exc, len(s.marks), s.is_zip, len(s.empty))
             it = QListWidgetItem()
             it.setData(Qt.UserRole, s.name)
             it.setSizeHint(QSize(0, 98))                  # 이름 + 촬영 시각 + 숫자 줄 + 아래 여백
@@ -951,8 +983,9 @@ class MainWindow(QMainWindow):
 
     def _start_thumbs(self) -> None:
         jobs = [(i, str(self.ws.source(f).path), f.name) for i, f in enumerate(self.frames)]
+        self._thumb_gen += 1
         self._thumb_thread = QThread(self)
-        self._thumb_worker = ThumbWorker(jobs, self.cfg.curator.thumb_px)
+        self._thumb_worker = ThumbWorker(jobs, self.cfg.curator.thumb_px, self._thumb_gen)
         self._thumb_worker.moveToThread(self._thumb_thread)
         self._thumb_thread.started.connect(self._thumb_worker.run)
         self._thumb_worker.ready.connect(self._on_thumb)
@@ -964,10 +997,15 @@ class MainWindow(QMainWindow):
             self._thumb_worker.stop()
         if self._thumb_thread is not None:
             self._thumb_thread.quit()
-            self._thumb_thread.wait(2000)
+            if not self._thumb_thread.wait(2000):           # 느린 디스크에서 아직 읽는 중: 돌고 있는 객체를 버리지 않는다
+                self._retired.append((self._thumb_thread, self._thumb_worker))
+        self._retired = [(t, w) for t, w in self._retired if t.isRunning()]
         self._thumb_thread = self._thumb_worker = None
+        self._thumb_gen += 1                                # 이미 보낸 신호가 뒤늦게 도착해도 버려진다
 
-    def _on_thumb(self, idx: int, img: QImage) -> None:
+    def _on_thumb(self, gen: int, idx: int, img: QImage) -> None:
+        if gen != self._thumb_gen:                          # 프레임 목록이 바뀌기 전의 결과: 번호가 맞지 않는다
+            return
         if idx < len(self.frames) and not img.isNull():
             self._thumbs[idx] = QPixmap.fromImage(img)
             self._flag_state[idx] = None
@@ -1020,13 +1058,19 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("세션을 여세요  ·  단축키는 F1")
             return
         f = self.frames[self.index]
-        img = QImage.fromData(self.ws.read_image(f))
+        try:
+            data = self.ws.read_image(f)
+            img = QImage.fromData(data) if image_is_complete(f.name, data) else QImage()
+        except (OSError, KeyError, zipfile.BadZipFile) as e:
+            log.warning("사진을 읽지 못했습니다: %s (%s)", f.key, e)
+            img = QImage()
         pm = QPixmap.fromImage(img) if not img.isNull() else None
+        unreadable = "" if pm is not None else "사진을 읽을 수 없습니다  (파일이 지워졌거나 저장이 덜 됐습니다. Delete 로 제외하세요)"
         side = self.ws.steering.logical_side(f.info.angle)
         rot = arrow_rotation_deg(side, self.cfg.curator.arrow_max_deg, self.cfg.curator.arrow_invert)
         reason = self.ws.curation(f).excluded.get(f.name)
         ts = f"{f.info.timestamp:%H:%M:%S}.{f.info.timestamp.microsecond // 1000:03d}"
-        self.view.set_frame(pm, rot, f"{self.index + 1} / {len(self.frames)}     조향 {f.info.angle}°     속도 {f.info.speed}%     {ts}", reason)
+        self.view.set_frame(pm, rot, f"{self.index + 1} / {len(self.frames)}     조향 {f.info.angle}°     속도 {f.info.speed}%     {ts}", reason, unreadable)
         a, b = self._session_span[f.session]
         self.info.set_info({
             "name": f.name, "session": f.session, "color": self._session_color(f.session),
@@ -1147,11 +1191,13 @@ class MainWindow(QMainWindow):
         return [self.frames[self.index]] if self.frames else []
 
     def _after_change(self, msg: str) -> None:
-        self.ws.save()                                  # 바뀔 때마다 저장: 원본이 아니라 curation.json 만
+        saved = self._save()                            # 바뀔 때마다 저장: 원본이 아니라 curation.json 만
         self._paint_strip_flags(); self._refresh_sessions(); self._show_current(); self._refresh_counts()
-        self.statusBar().showMessage(msg, 4000)
+        self.statusBar().showMessage(msg if saved else self.SAVE_FAILED, 4000 if saved else 10000)
 
-    def _change(self, sel: List[Frame], exclude: bool) -> None:
+    def _change(self, sel: List[Frame], exclude: bool) -> int:
+        """돌려주는 값 = 실제로 상태가 바뀐 장수 (이미 제외된 사진을 또 제외하면 0)."""
+        changed = sum(1 for f in sel if self.ws.is_excluded(f) != exclude)
         touched = []
         for s in sorted({f.session for f in sel}):
             cur = self.ws.curations[s]
@@ -1162,22 +1208,25 @@ class MainWindow(QMainWindow):
                 touched.append(s)
         if touched:
             self._history.append(touched)
+        return changed
+
+    def _change_selection(self, exclude: bool) -> None:
+        sel = self._selection()
+        if not sel:
+            return
+        n = self._change(sel, exclude)
+        self.selected = set(); self.anchor = self.index
+        if n:
+            self._after_change(f"{n:,}장을 {'제외' if exclude else '복구'}했습니다  ·  Ctrl+Z 로 되돌리기")
+        else:                                           # 바뀐 것이 없다: 저장도, 되돌리기 기록도 없다
+            self._paint_strip_flags(); self._show_current()
+            self.statusBar().showMessage("이미 제외된 사진입니다" if exclude else "이미 포함된 사진입니다", 4000)
 
     def exclude_selection(self) -> None:
-        sel = self._selection()
-        if not sel:
-            return
-        self._change(sel, True)
-        self.selected = set(); self.anchor = self.index
-        self._after_change(f"{len(sel)}장을 제외했습니다  ·  Ctrl+Z 로 되돌리기")
+        self._change_selection(True)
 
     def restore_selection(self) -> None:
-        sel = self._selection()
-        if not sel:
-            return
-        self._change(sel, False)
-        self.selected = set(); self.anchor = self.index
-        self._after_change(f"{len(sel)}장을 복구했습니다  ·  Ctrl+Z 로 되돌리기")
+        self._change_selection(False)
 
     def toggle_current(self) -> None:
         if not self.frames:
@@ -1212,18 +1261,26 @@ class MainWindow(QMainWindow):
         dlg.show()
         try:
             path = build_dataset(self.ws, out, progress=lambda i, n: (dlg.setValue(i), QApplication.processEvents()))
-        except (ValueError, OSError) as e:
+        except BrokenImage as e:                        # 그 사진으로 데려가서 제외하게 한다
             dlg.close()
-            self._notice("데이터셋 만들기", "데이터셋을 만들지 못했습니다", str(e))
+            if e.frame in self.frames:
+                self.goto(self.frames.index(e.frame))
+            self._notice("데이터셋 만들기", "저장이 덜 된 사진이 있습니다",
+                         "그 사진으로 이동했습니다. Delete 로 제외한 뒤 다시 만드세요.")
             return
-        dlg.close()
+        except Exception as e:                          # 무엇이 실패하든 진행 창을 닫고 이유를 알린다 (반쪽 zip 은 남지 않는다)
+            log.exception("데이터셋 생성 실패")
+            self._notice("데이터셋 만들기", "데이터셋을 만들지 못했습니다", _reason(e))
+            return
+        finally:
+            dlg.close()
         self.statusBar().showMessage(f"데이터셋 작성 완료: {path.name}", 8000)
         BuildDoneDialog(path, sum(inc.values()), sum(exc.values()), len(self.ws.sessions), self).exec()
 
     def closeEvent(self, event) -> None:  # noqa: N802
         self._play.stop()
         self._stop_thumbs()
-        self.ws.save()
+        self._save()                                    # 저장에 실패해도 창은 닫혀야 한다
         self.ws.close_all()
         super().closeEvent(event)
 

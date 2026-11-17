@@ -10,6 +10,8 @@ from __future__ import annotations
 import csv
 import io
 import json
+import logging
+import os
 import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -21,6 +23,8 @@ from common.config import Config
 from common.filename import (FrameInfo, make_dataset_image_name, make_dataset_stamp, make_dataset_zip_name,
                              try_parse_frame_name)
 from common.steering import SteeringModel
+
+log = logging.getLogger(__name__)
 
 DATASET_SCHEMA_VERSION = 1
 CURATION_SCHEMA_VERSION = 1
@@ -34,6 +38,21 @@ class AlreadyOpen(ValueError):
 
 class NoFrames(ValueError):
     """수집기가 만든 사진(…_aNNN_sNNN.jpg)이 하나도 없는 폴더/zip."""
+
+
+class BrokenImage(ValueError):
+    """포함된 사진 하나가 끝까지 저장되지 않았다 (전원이 끊긴 세션). 그 사진을 제외해야 데이터셋을 만들 수 있다."""
+
+    def __init__(self, frame: "Frame"):
+        super().__init__(f"저장이 덜 된 사진입니다: {frame.key}")
+        self.frame = frame
+
+
+def image_is_complete(name: str, data: bytes) -> bool:
+    """파일이 처음부터 끝까지 저장됐는지 머리와 꼬리 표식으로 본다 (내용을 풀어 보지는 않는다)."""
+    if name.lower().endswith(".png"):
+        return data.startswith(b"\x89PNG\r\n\x1a\n") and data.rstrip(b"\x00").endswith(b"IEND\xaeB`\x82")
+    return data.startswith(b"\xff\xd8") and data.rstrip(b"\x00").endswith(b"\xff\xd9")
 
 
 # ---------------------------------------------------------------------------
@@ -71,32 +90,46 @@ class SessionSource:
         self.is_zip = self.path.is_file() and self.path.suffix.lower() == ".zip"
         self._zip: Optional[zipfile.ZipFile] = zipfile.ZipFile(self.path) if self.is_zip else None
         self._members: Dict[str, str] = {}     # 파일 이름 → zip 안의 경로 (zip 일 때)
+        self.empty: List[str] = []             # 0바이트 사진 (전원이 끊겨 저장되지 못한 것). 프레임 목록에 넣지 않는다
         self.name = self.path.stem if self.is_zip else self.path.name
-        self.frames: List[Frame] = self._list_frames()
-        self.marks: List[MarkInterval] = self._read_marks()
-        self.meta: dict = self._read_meta()
+        try:
+            self.frames: List[Frame] = self._list_frames()
+            self.marks: List[MarkInterval] = self._read_marks()
+            self.meta: dict = self._read_meta()
+        except Exception:
+            self.close()
+            raise
 
     # -- 내부 --------------------------------------------------------------
-    def _entries(self) -> Iterable[str]:
-        """파일 이름(경로 없이)을 돌려준다. zip 이면 안의 경로를 _members 에 기억한다."""
+    def _entries(self) -> Iterable[Tuple[str, int]]:
+        """(파일 이름, 크기)를 돌려준다. zip 이면 안의 경로를 _members 에 기억한다."""
         if self._zip is None:
             for p in sorted(self.path.iterdir()):
                 if p.is_file():
-                    yield p.name
+                    yield p.name, p.stat().st_size
         else:
-            for m in self._zip.namelist():
+            for zi in self._zip.infolist():
+                m = zi.filename
                 if m.endswith("/"):
                     continue
                 base = m.rsplit("/", 1)[-1]
+                if base in self._members:
+                    continue
                 self._members[base] = m
-                yield base
+                yield base, zi.file_size
 
     def _list_frames(self) -> List[Frame]:
         out = []
-        for base in self._entries():
+        for base, size in self._entries():
             info = try_parse_frame_name(base)
-            if info is not None:
-                out.append(Frame(self.name, info))
+            if info is None:
+                continue
+            if size == 0:
+                self.empty.append(base)
+                continue
+            out.append(Frame(self.name, info))
+        if self.empty:
+            log.warning("%s: 0바이트 사진 %d장을 뺐습니다 (전원이 끊겨 저장되지 못한 사진)", self.name, len(self.empty))
         out.sort(key=lambda f: (f.info.timestamp, f.info.name))
         return out
 
@@ -132,9 +165,10 @@ class SessionSource:
         if not text:
             return {}
         try:
-            return json.loads(text)
+            data = json.loads(text)
         except ValueError:
             return {}
+        return data if isinstance(data, dict) else {}
 
     def frames_in_marks(self) -> List[Frame]:
         return [f for f in self.frames if any(m.start <= f.info.timestamp <= m.end for m in self.marks)]
@@ -162,9 +196,12 @@ class Curation:
         if p.exists():
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
-                return cls(excluded=dict(data.get("excluded", {})))
+                exc = data.get("excluded") if isinstance(data, dict) else None
+                if isinstance(exc, dict):
+                    return cls(excluded={str(k): str(v) for k, v in exc.items()})
             except (ValueError, OSError):
                 pass
+            log.warning("%s 를 읽을 수 없어 처음 여는 것으로 다룹니다 (□ 구간만 미리 제외)", p.name)
         c = cls()
         for f in src.frames_in_marks():            # 처음 열 때: □ 로 표시한 구간은 미리 제외
             c.excluded[f.name] = REASON_MARK
@@ -238,8 +275,13 @@ class Workspace:
         if not src.frames:
             src.close()
             raise NoFrames(src.name)
+        try:
+            curation = Curation.load_or_init(src)
+        except Exception:
+            src.close()
+            raise
         self.sessions.append(src)
-        self.curations[src.name] = Curation.load_or_init(src)
+        self.curations[src.name] = curation
         return src
 
     def close_all(self) -> None:
@@ -296,14 +338,30 @@ def build_dataset(ws: Workspace, out_dir: Path | str, now: Optional[datetime] = 
     if not frames:
         raise NoFrames("포함된 사진이 없습니다")
     inc, exc = ws.counts()
-    cam = ws.cfg.camera
     labels = io.StringIO()
     w = csv.writer(labels, lineterminator="\n")
     w.writerow(["index", "image", "servo_angle", "motor_speed", "source"])
-    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_STORED) as z:   # JPEG 은 더 안 줄어든다
+    part_path = zip_path.with_name(zip_path.name + ".part")
+    try:
+        _write_dataset(ws, part_path, frames, stamp, now, inc, exc, labels, w, progress)
+        os.replace(part_path, zip_path)
+    except BaseException:
+        part_path.unlink(missing_ok=True)
+        raise
+    return zip_path
+
+
+def _write_dataset(ws: Workspace, path: Path, frames: List[Frame], stamp: str, now: datetime,
+                   inc: Dict[int, int], exc: Dict[int, int], labels: io.StringIO, w, progress) -> None:
+    cam = ws.cfg.camera
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_STORED) as z:   # JPEG 은 더 안 줄어든다
         for i, f in enumerate(frames):
-            img_name = make_dataset_image_name(stamp, i)
-            z.writestr(f"images/{img_name}", ws.read_image(f))
+            ext = f.name.rsplit(".", 1)[-1].lower()             # 원본 확장자를 그대로 (내용과 이름이 어긋나지 않게)
+            img_name = make_dataset_image_name(stamp, i, ext)
+            data = ws.read_image(f)
+            if not image_is_complete(f.name, data):
+                raise BrokenImage(f)
+            z.writestr(f"images/{img_name}", data)
             w.writerow([i, img_name, f.info.angle, f.info.speed, f.key])
             if progress and (i % 50 == 0 or i == len(frames) - 1):
                 progress(i + 1, len(frames))
@@ -320,6 +378,6 @@ def build_dataset(ws: Workspace, out_dir: Path | str, now: Optional[datetime] = 
             "counts_by_angle": {str(k): v for k, v in sorted(inc.items())},
             "excluded": sum(exc.values()),
             "excluded_by_angle": {str(k): v for k, v in sorted(exc.items())},
+            "empty_files_skipped": sum(len(s.empty) for s in ws.sessions),
         }
         z.writestr("meta.json", json.dumps(meta, ensure_ascii=False, indent=2))
-    return zip_path
