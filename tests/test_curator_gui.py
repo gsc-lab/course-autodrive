@@ -65,6 +65,10 @@ def test_window_opens_navigates_excludes_and_builds(qapp, tmp_path):
         path = build_dataset(win.ws, tmp_path / "out")
         with zipfile.ZipFile(path) as z:
             assert len([n for n in z.namelist() if n.startswith("images/")]) == 9
+        from curator.app import BuildDoneDialog
+        done = BuildDoneDialog(path, 9, 3, 1, win)
+        assert done.windowTitle() == "데이터셋 작성 완료" and done.open_btn.text() == "폴더 열기" and done.path == path
+        done.close()
         qapp.processEvents()
     finally:
         win.close()

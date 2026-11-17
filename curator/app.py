@@ -11,13 +11,15 @@
 from __future__ import annotations
 
 import logging
+import subprocess
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from PySide6.QtCore import QObject, QPointF, QRectF, QSize, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import (QAction, QBrush, QColor, QFont, QIcon, QImage, QKeySequence, QPainter, QPen, QPixmap,
-                           QPolygonF)
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import (QAction, QBrush, QColor, QDesktopServices, QFont, QIcon, QImage, QKeySequence, QPainter, QPen,
+                           QPixmap, QPolygonF)
 from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
                                QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QProgressDialog, QPushButton,
                                QScrollArea, QSizePolicy, QVBoxLayout, QWidget)
@@ -72,6 +74,7 @@ QScrollBar::handle:vertical {{ background: #4a5263; border-radius: 4px; min-heig
 QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
 QStatusBar {{ background: {C_PANEL}; color: {C_MUTED}; border-top: 1px solid {C_BORDER}; }}
 QDialog {{ background: {C_PANEL}; }}
+QDialog QLabel {{ background: transparent; }}
 QToolTip {{ background: #0b0d11; color: {C_TEXT}; border: 1px solid {C_BORDER}; padding: 4px; }}
 """
 
@@ -393,6 +396,57 @@ class ShortcutDialog(QDialog):
                 grid.addWidget(k, row, 0, Qt.AlignLeft); grid.addWidget(QLabel(desc), row, 1); row += 1
         close = QPushButton("닫기"); close.clicked.connect(self.accept)
         grid.addWidget(close, row, 1, Qt.AlignRight)
+
+
+def reveal_in_folder(path: Path) -> None:
+    """파일이 든 폴더를 연다. 윈도우에서는 탐색기에서 그 파일을 선택한 상태로."""
+    if sys.platform == "win32":
+        subprocess.Popen(["explorer", "/select,", str(path)])
+    else:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))
+
+
+class BuildDoneDialog(QDialog):
+    """데이터셋 작성 완료: 무엇이 어디에 만들어졌는지 보여 주고 바로 폴더를 열 수 있게 한다."""
+
+    def __init__(self, path: Path, included: int, excluded: int, sessions: int, parent=None):
+        path = Path(path).resolve()
+        super().__init__(parent)
+        self.path = path
+        self.setWindowTitle("데이터셋 작성 완료")
+        self.setMinimumWidth(520)
+        lay = QVBoxLayout(self); lay.setContentsMargins(24, 20, 24, 18); lay.setSpacing(14)
+        head = QHBoxLayout(); head.setSpacing(12)
+        badge = QLabel("✓"); badge.setFixedSize(40, 40); badge.setAlignment(Qt.AlignCenter)
+        badge.setStyleSheet(f"background:{C_OK}; color:white; border-radius:20px; font-size:22px; font-weight:700;")
+        title = QLabel("데이터셋 작성 완료"); title.setStyleSheet("font-size:17px; font-weight:700;")
+        head.addWidget(badge); head.addWidget(title); head.addStretch(1)
+        lay.addLayout(head)
+        size_mb = path.stat().st_size / (1024 * 1024) if path.exists() else 0.0
+        stats = QHBoxLayout(); stats.setSpacing(10)
+        for value, label, color in ((f"{included:,}", "포함된 사진", C_ACCENT), (f"{excluded:,}", "제외된 사진", C_DANGER),
+                                    (str(sessions), "세션", C_TEXT), (f"{size_mb:.1f} MB", "파일 크기", C_TEXT)):
+            box = QFrame(); box.setObjectName("card")
+            bl = QVBoxLayout(box); bl.setContentsMargins(10, 8, 10, 8); bl.setSpacing(0)
+            v = QLabel(value); v.setAlignment(Qt.AlignCenter); v.setStyleSheet(f"font-size:18px; font-weight:700; color:{color};")
+            n = QLabel(label); n.setAlignment(Qt.AlignCenter); n.setObjectName("hint")
+            bl.addWidget(v); bl.addWidget(n); stats.addWidget(box)
+        lay.addLayout(stats)
+        info = QLabel(f"<table cellspacing='4'><tr><td style='color:{C_MUTED}'>파일</td><td><b>{path.name}</b></td></tr>"
+                      f"<tr><td style='color:{C_MUTED}'>위치</td><td>{path.parent}</td></tr></table>")
+        info.setWordWrap(True); info.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        lay.addWidget(info)
+        hint = QLabel("이 zip 을 학습(trainer)에 그대로 넣습니다. 원본 세션 폴더는 바뀌지 않았습니다."); hint.setObjectName("hint")
+        lay.addWidget(hint)
+        row = QHBoxLayout(); row.addStretch(1)
+        close = QPushButton("닫기"); close.clicked.connect(self.accept)
+        self.open_btn = QPushButton("폴더 열기"); self.open_btn.setObjectName("primary"); self.open_btn.setDefault(True)
+        self.open_btn.clicked.connect(self._open)
+        row.addWidget(close); row.addWidget(self.open_btn); lay.addLayout(row)
+
+    def _open(self) -> None:
+        reveal_in_folder(self.path)
+        self.accept()
 
 
 def card(title: str, hint: str = "") -> Tuple[QFrame, QVBoxLayout]:
@@ -880,7 +934,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "데이터셋", str(e))
             return
         dlg.close()
-        QMessageBox.information(self, "데이터셋", f"{path}\n{sum(inc.values())}장 (제외 {sum(exc.values())}장)")
+        self.statusBar().showMessage(f"데이터셋 작성 완료: {path}", 8000)
+        BuildDoneDialog(path, sum(inc.values()), sum(exc.values()), len(self.ws.sessions), self).exec()
 
     def closeEvent(self, event) -> None:  # noqa: N802
         self._play.stop()
