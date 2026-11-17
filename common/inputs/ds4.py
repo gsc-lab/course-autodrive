@@ -34,7 +34,9 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # 리눅스 input 상수 (evdev 없이도 테스트할 수 있도록 숫자로 둔다)
 # ---------------------------------------------------------------------------
-EV_KEY, EV_ABS = 0x01, 0x03
+EV_SYN, EV_KEY, EV_ABS = 0x00, 0x01, 0x03
+SYN_DROPPED = 0x03              # 커널 큐가 넘쳐 이벤트를 버렸다는 표시
+AXIS_SYNC_SEC = 0.25            # 축의 실제 값을 커널에 다시 묻는 주기
 ABS_X, ABS_Y, ABS_Z, ABS_RX, ABS_RY, ABS_RZ = 0x00, 0x01, 0x02, 0x03, 0x04, 0x05
 ABS_HAT0X, ABS_HAT0Y = 0x10, 0x11
 BTN_SOUTH, BTN_EAST, BTN_C, BTN_NORTH, BTN_WEST, BTN_Z = 0x130, 0x131, 0x132, 0x133, 0x134, 0x135
@@ -241,6 +243,39 @@ class HidrawLink:
             self._close = None
 
 
+class AxisSync:
+    """이벤트로 들은 축 값과 커널이 아는 실제 값을 주기적으로 맞춘다.
+
+    evdev 는 값이 바뀔 때만 이벤트를 주고, 주 루프가 잠깐 멈춘 사이 큐가 넘치면 이벤트를 버린다 (SYN_DROPPED).
+    그때 "R2 를 놓았다"가 버려지면 패드는 멀쩡한데 차는 계속 달린다 (링크 감시도 감시 스레드도 잡지 못한다).
+    그래서 조향·전진·후진 축은 AXIS_SYNC_SEC 마다, 그리고 SYN_DROPPED 를 보면 즉시 실제 값을 읽어 다르면 바로잡는다.
+    """
+
+    def __init__(self, codes: List[int], read_value, interval_sec: float = AXIS_SYNC_SEC, now: Optional[float] = None):
+        self._read, self.interval = read_value, float(interval_sec)
+        self.raw: Dict[int, int] = {c: read_value(c) for c in codes}    # 시작 값은 이벤트로 내지 않는다
+        self._next = (time.monotonic() if now is None else now) + self.interval
+        self.corrections = 0
+
+    def note(self, code: int, value: int) -> None:
+        if code in self.raw:
+            self.raw[code] = value
+
+    def poll(self, now: float, force: bool = False) -> List[Tuple[int, int]]:
+        """놓친 변화의 (축 코드, 실제 값) 목록. 대부분 빈 목록이다."""
+        if not force and now < self._next:
+            return []
+        self._next = now + self.interval
+        out = []
+        for code, seen in self.raw.items():
+            value = self._read(code)
+            if value != seen:
+                self.raw[code] = value
+                out.append((code, value))
+        self.corrections += len(out)
+        return out
+
+
 class DS4Input(InputDevice):
     name = "ds4"
     requires_deadman = True
@@ -258,6 +293,8 @@ class DS4Input(InputDevice):
         absinfo = {code: (info.min, info.max) for code, info in caps.get(EV_ABS, [])}
         self.mapper = DS4Mapper(codes, absinfo, cfg.stick_deadzone)
         self.dev.grab()  # 다른 프로세스가 같은 입력을 받지 않도록
+        self.axis_sync = AxisSync([codes["steer"], codes["throttle"], codes["reverse"]],
+                                  lambda code: self.dev.absinfo(code).value)
 
         self.features = self.layout == "sony"   # 라이트바·진동은 sony 계열 드라이버에서만
         self._leds = find_ds4_lightbar_dirs() if (cfg.lightbar and self.features) else []
@@ -285,11 +322,23 @@ class DS4Input(InputDevice):
     def poll(self) -> List[InputEvent]:
         events: List[InputEvent] = []
         try:
+            dropped = False
             while True:
                 ev = self.dev.read_one()
                 if ev is None:
                     break
+                if ev.type == EV_SYN:
+                    dropped = dropped or ev.code == SYN_DROPPED
+                    continue
+                if ev.type == EV_ABS:
+                    self.axis_sync.note(ev.code, ev.value)
                 out = self.mapper.translate(ev.type, ev.code, ev.value)
+                if out is not None:
+                    events.append(out)
+            for code, value in self.axis_sync.poll(time.monotonic(), force=dropped):
+                log.warning("패드 축 0x%02x 의 변화를 놓쳐 실제 값 %d 로 맞춥니다%s", code, value,
+                            " (커널 큐 넘침)" if dropped else "")
+                out = self.mapper.translate(EV_ABS, code, value)
                 if out is not None:
                     events.append(out)
         except OSError as e:  # ENODEV: 블루투스 끊김

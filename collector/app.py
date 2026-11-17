@@ -28,6 +28,8 @@ LOOP_HZ = 50
 STATUS_HZ = 5
 MARK_FLASH_SEC = 0.3    # □ 를 누르면 도트 매트릭스 전체가 이만큼 켜진다
 WATCHDOG_SEC = 1.0      # 주 루프가 이보다 오래 멈추면 감시 스레드가 모터를 끈다 (PCA9685 는 스스로 멈추지 않는다)
+FRAME_MAX_AGE_SEC = 0.5 # 이보다 오래된 카메라 프레임은 저장하지 않는다 (옛 그림에 지금의 조향 라벨이 붙지 않게)
+CAMERA_STALE_SEC = 2.0  # 카메라가 이만큼 새 프레임을 못 주면 고장으로 보고 정지한다
 
 
 class PreflightError(RuntimeError):
@@ -68,6 +70,35 @@ def preflight(cfg: Config, mock: bool, input_kind: str, ds4_soft: bool, skip: bo
     return results
 
 
+def _fd_writable(fd: int) -> bool:
+    """지금 fd 에 쓰면 멈추지 않는지. 아무도 읽지 않는 터미널(끊긴 채 매달린 SSH)이면 False."""
+    if not hasattr(select, "poll"):                       # Windows: 판단할 수 없으니 쓴다
+        return True
+    p = select.poll()
+    p.register(fd, select.POLLOUT)
+    return bool(p.poll(0))
+
+
+class DroppingStderrHandler(logging.Handler):
+    """화면(stderr)용 로그 핸들러. 쓸 수 없으면 그 줄을 버린다.
+
+    보통의 StreamHandler 는 끊긴 SSH 에서 영원히 멈춘다. 주 루프가 경고 한 줄을 쓰다 멈추면 차는 마지막 명령으로
+    계속 달리고, 감시 스레드도 같은 핸들러의 잠금을 기다리느라 멈춘다. 파일 로그(collector.log)는 그대로 남는다.
+    """
+
+    def __init__(self, fd: int = 2, level: int = logging.NOTSET):
+        super().__init__(level)
+        self.fd = fd
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            data = (self.format(record) + "\n").encode(errors="replace")
+            if _fd_writable(self.fd):
+                os.write(self.fd, data)
+        except Exception:                                 # 로그 때문에 주행이 영향을 받으면 안 된다
+            pass
+
+
 def _safe_write(text: str) -> None:
     """터미널에 상태를 쓰되 절대 멈추지 않는다.
 
@@ -80,11 +111,8 @@ def _safe_write(text: str) -> None:
     except (AttributeError, ValueError, OSError):
         return
     try:
-        if hasattr(select, "poll"):                       # POSIX
-            p = select.poll()
-            p.register(fd, select.POLLOUT)
-            if not p.poll(0):
-                return                                    # 아무도 읽지 않는 터미널: 상태줄을 버린다
+        if not _fd_writable(fd):
+            return                                        # 아무도 읽지 않는 터미널: 상태줄을 버린다
         os.write(fd, text.encode(errors="replace"))
     except (OSError, ValueError):                         # EIO/EPIPE: 터미널이 아예 사라짐
         pass
@@ -177,6 +205,7 @@ class Collector:
         except Exception:
             log.exception("수집 루프 예외")
             st.error = st.error or "예외 발생"
+            st.quit = True                              # 감시 스레드도 끝낸다
         finally:
             self.close()
         if st.error:
@@ -196,13 +225,16 @@ class Collector:
         if now - self._last_tick <= WATCHDOG_SEC or self.vehicle is None or self.vehicle.state.speed == 0:
             return False
         st = self.logic.state
-        log.error("주 루프가 %.1f초 멈춤 → 감시 스레드가 비상 정지", now - self._last_tick)
+        failure = None
+        try:
+            self.vehicle.stop(smooth=False)             # 가장 먼저. 아래의 로그 쓰기는 끊긴 터미널에서 막힐 수 있다
+        except Exception as e:
+            failure = e
         st.error = st.error or "주 루프 멈춤 → 비상 정지"
         st.quit = True
-        try:
-            self.vehicle.stop(smooth=False)
-        except Exception as e:
-            log.error("비상 정지 실패: %s", e)
+        log.error("주 루프가 %.1f초 멈춤 → 감시 스레드가 비상 정지", now - self._last_tick)
+        if failure is not None:
+            log.error("비상 정지 실패: %s", failure)
         return True
 
     def _step(self, now: float) -> None:
@@ -221,7 +253,7 @@ class Collector:
             self.input.notify(n)
         st.notifications.clear()
 
-        if self.camera.error and not st.error:
+        if (self.camera.error or self.camera.age(now) > CAMERA_STALE_SEC) and not st.error:
             st.error = "카메라 프레임 수신 실패"
             log.error(st.error)
             st.recording = False
@@ -232,7 +264,7 @@ class Collector:
 
         if logic.should_save(now):
             frame, _ = self.camera.read()
-            if frame is not None:
+            if frame is not None and self.camera.age(now) <= FRAME_MAX_AGE_SEC:   # 멈춘 카메라의 옛 그림은 저장하지 않는다
                 s.save_frame(frame, st.angle, logic.effective_speed, datetime.now())
                 logic.mark_saved(now)
 

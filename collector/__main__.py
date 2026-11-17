@@ -8,6 +8,14 @@ from pathlib import Path
 from common.config import ConfigError, load_config
 
 
+def screen_handler(check: bool) -> logging.Handler:
+    """화면용 로그: 상태줄과 섞이지 않게 경고 이상만 (점검 모드는 전부). 끊긴 터미널에서 멈추지 않는 핸들러를 쓴다."""
+    from collector.app import DroppingStderrHandler
+    h = DroppingStderrHandler(level=logging.INFO if check else logging.WARNING)
+    h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    return h
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="collector", description="차선 유지 RC카 데이터 수집기")
     p.add_argument("--config", help="config.yaml 경로 (기본: 저장소 루트)")
@@ -28,9 +36,7 @@ def main(argv=None) -> int:
     log_dir = Path(cfg.recording.root)
     log_dir.mkdir(parents=True, exist_ok=True)
     handlers = [logging.FileHandler(log_dir / "collector.log", encoding="utf-8")]
-    stderr = logging.StreamHandler(sys.stderr)
-    stderr.setLevel(logging.INFO if args.check else logging.WARNING)  # 상태줄과 섞이지 않게 경고 이상만 화면에
-    handlers.append(stderr)
+    handlers.append(screen_handler(args.check))
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s", handlers=handlers)
 

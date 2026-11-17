@@ -263,6 +263,11 @@ def validate(cfg: Config) -> None:
         raise ConfigError(f"hardware.servo.backlash_settle_sec 는 0~1 이어야 합니다: {h.servo.backlash_settle_sec}")
     if h.backend not in ("jetson", "mock"):
         raise ConfigError(f"hardware.backend 는 jetson 또는 mock 이어야 합니다: {h.backend!r}")
+    if h.stop_decay_step < 1 or not (0.0 <= float(h.stop_decay_delay) <= 0.1) \
+            or (100.0 / h.stop_decay_step) * float(h.stop_decay_delay) > 0.6:
+        raise ConfigError("hardware.stop_decay_step 은 1 이상, stop_decay_delay 는 0~0.1 초이고, 100 % 에서 서는 데 0.6초를 "
+                          "넘으면 안 됩니다 (감속하는 동안 조종이 멈춘다): "
+                          f"step={h.stop_decay_step}, delay={h.stop_decay_delay}")
     mt = h.motor
     if not (24 <= mt.pwm_hz <= 1526):
         raise ConfigError("hardware.motor.pwm_hz 는 PCA9685 가 낼 수 있는 24~1526 Hz 여야 합니다")
@@ -321,6 +326,10 @@ def validate(cfg: Config) -> None:
         raise ConfigError("input.ds4.layout 은 auto | sony | generic 중 하나여야 합니다")
     if not isinstance(cfg.input.ds4.codes, dict):
         raise ConfigError("input.ds4.codes 는 매핑이어야 합니다")
+    lt = float(cfg.input.ds4.link_timeout_sec)
+    if lt != 0 and not (0.2 <= lt <= 10):
+        raise ConfigError(f"input.ds4.link_timeout_sec 는 0(끔) 또는 0.2~10 초여야 합니다: {lt} "
+                          "(너무 짧으면 블루투스가 잠깐 늦을 때마다 차가 선다)")
 
     p = cfg.preprocess
     if not (0.0 <= p.crop_top_ratio < p.crop_bottom_ratio <= 1.0):
@@ -340,8 +349,11 @@ def load_config(path: Optional[str | Path] = None) -> Config:
     p = resolve_config_path(path)
     if not p.exists():
         raise ConfigError(f"설정 파일이 없습니다: {p}")
-    with open(p, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+    except yaml.YAMLError as e:
+        raise ConfigError(f"{p.name} 의 YAML 문법이 올바르지 않습니다: {e}") from None
     cfg = _build(Config, data)
     validate(cfg)
     cfg.source_path = str(p)

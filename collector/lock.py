@@ -60,10 +60,10 @@ class InstanceLock:
     def release(self) -> None:
         if self.fd is not None:
             try:
+                self.path.unlink()         # 잠금을 쥔 채 지운다: 닫은 뒤 지우면 그 사이 잠근 다른 수집기의 파일을 지울 수 있다
+            except OSError:
+                pass
+            try:
                 os.close(self.fd)          # flock 은 fd 가 닫히면 풀린다
             finally:
                 self.fd = None
-            try:
-                self.path.unlink()
-            except OSError:
-                pass

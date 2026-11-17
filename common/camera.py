@@ -28,6 +28,10 @@ class BaseCamera:
     def error(self) -> bool:
         return False
 
+    def age(self, now: Optional[float] = None) -> float:
+        """가장 최근 프레임이 몇 초 전 것인지. 읽는 스레드가 멈추면 계속 커진다."""
+        return 0.0
+
     def props(self) -> dict:
         return {}
 
@@ -109,6 +113,9 @@ class Camera(BaseCamera):
     @property
     def error(self) -> bool:
         return self._error
+
+    def age(self, now: Optional[float] = None) -> float:
+        return (time.monotonic() if now is None else now) - self._t
 
     def props(self) -> dict:
         return {

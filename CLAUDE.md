@@ -211,6 +211,16 @@ without side effects at import time (no device opens, no terminal mode changes a
   the pad is the controller and the dot matrix shows status; the keyboard mode still stops on SIGHUP). A flock in
   `dataset/collector.lock` (`collector/lock.py`) refuses a second collector and prints the `kill <PID>` command. Startup
   checks for the I2C bus and both PCA9685 boards, camera, disk space.
+- **Four more guards from the 2026-11-17 code review** (`tests/test_collector_robustness.py`): (1) screen logging goes
+  through `DroppingStderrHandler` (never a plain `StreamHandler`): one warning written to a hung SSH terminal used to block
+  the main loop, and the watchdog blocked behind the same handler lock, so the watchdog now also stops the motor *before*
+  it logs; (2) `AxisSync` in `common/inputs/ds4.py` re-reads the steer/throttle/reverse axes from the kernel every 0.25 s
+  and on `SYN_DROPPED`, because evdev drops events when its queue overflows during a short loop stall and a lost
+  "R2 released" keeps the car driving with a healthy link; (3) frames older than `FRAME_MAX_AGE_SEC` are not saved and a
+  camera silent for `CAMERA_STALE_SEC` stops the car (a hung camera thread used to keep saving the last frame under new
+  labels); (4) `SessionWriter` fsyncs new files from a background thread every 2 s (measured on the board's SD card:
+  save time max 14.5 ms with it, 77 ms without), so a power cut loses about 2 s instead of leaving ~13 s of 0-byte JPEGs.
+  Not yet exercised with a real pad or on the track.
 
 ## Curator behaviour (B2, confirmed 2026-11-04)
 
@@ -228,7 +238,7 @@ loss has **0-byte JPEGs at its tail** (27 each in `20261110_1842` and `20261110_
 by head/tail markers) instead of shipping it to the trainer; the zip is written to `*.part` and renamed, so a failed build
 leaves nothing behind; thumbnail results carry a generation number because frame indices shift when another session is
 opened; a failed `curation.json` write (read-only folder, sync lock) is reported in the status bar and never blocks editing
-or closing. Open: the collector does not fsync frames, so the last ~13 s before a power cut are lost.
+or closing.
 
 ## Legacy notes (`legacy/`, untracked local reference only — also in git history before `d2e0de0`)
 
