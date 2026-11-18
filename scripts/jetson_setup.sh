@@ -33,6 +33,36 @@ fail() { printf '  \033[31m[실패]\033[0m %s\n' "$*"; }
 step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 die()  { fail "$*"; exit 1; }
 
+# 오래 걸리는 명령을 진행 표시와 함께 실행한다:  run_step "설명" 명령 인자...
+# 출력은 임시 파일로 보내고, 화면 한 줄에 경과 시간과 그 명령의 마지막 출력 줄을 1초마다 갱신한다.
+# 실패하면 출력의 마지막 20줄을 보여 주고 끝낸다. 화면이 터미널이 아니면(파이프, 로그) 시작 줄만 찍는다.
+run_step() {
+    local label=$1; shift
+    local log pid t0=$SECONDS el last rc=0
+    log=$(mktemp)
+    { r=0; "$@" >"$log" 2>&1 || r=$?; exit "$r"; } &
+    pid=$!
+    if [[ -t 1 ]]; then
+        while kill -0 "$pid" 2>/dev/null; do
+            el=$((SECONDS - t0))
+            last=$(tail -c 400 "$log" 2>/dev/null | tr '\r' '\n' | grep -v '^[[:space:]]*$' | tail -n 1 || true)
+            printf '\r\033[K  … %s (%d:%02d) %s' "$label" $((el / 60)) $((el % 60)) "${last:0:40}"
+            sleep 1
+        done
+        printf '\r\033[K'
+    else
+        echo "  … $label"
+    fi
+    wait "$pid" || rc=$?
+    if [[ $rc != 0 ]]; then
+        fail "$label (종료 코드 $rc). 마지막 출력:"
+        tail -n 20 "$log" | sed 's/^/      /'
+        rm -f "$log"; exit 1
+    fi
+    el=$((SECONDS - t0)); rm -f "$log"
+    ok "$label ($((el / 60))분 $((el % 60))초)"
+}
+
 require_jetson() {
     [[ -f /etc/nv_tegra_release ]] || die "Jetson 이 아닙니다 (/etc/nv_tegra_release 없음)"
     local rel; rel=$(head -1 /etc/nv_tegra_release)
@@ -51,10 +81,11 @@ i2c_has() {   # $1=주소(16진 두 자리, 예: 40) → i2cdetect 표에 그 �
 cmd_install() {
     step "1/5 플랫폼 확인"; require_jetson
 
-    step "2/5 시스템 패키지"
-    sudo apt-get update -qq
-    sudo apt-get install -y -qq git curl python3-dev build-essential bluez v4l-utils i2c-tools >/dev/null
-    ok "git curl python3-dev build-essential bluez v4l-utils i2c-tools"
+    step "2/5 시스템 패키지 (새 이미지에서는 몇 분 걸립니다)"
+    sudo -v                                    # 비밀번호를 여기서 한 번 받아 둔다 (진행 표시 중에는 물을 수 없다)
+    run_step "패키지 목록 갱신" sudo apt-get update
+    run_step "패키지 설치: git curl python3-dev build-essential bluez v4l-utils i2c-tools" \
+        sudo apt-get install -y git curl python3-dev build-essential bluez v4l-utils i2c-tools
 
     # 재부팅 원인을 나중에 볼 수 있게 저널을 디스크에 남긴다 (기본은 메모리라 재부팅하면 지워진다. 2026-11-10 주행 중 보드가
     # 재시작했는데 이전 부팅 기록이 없어 원인을 못 찾았다)
@@ -104,8 +135,7 @@ EOF
 
     step "4/5 uv + 가상환경 + 의존성"
     if ! command -v uv >/dev/null 2>&1 && [[ ! -x "$HOME/.local/bin/uv" ]]; then
-        curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null
-        ok "uv 설치"
+        run_step "uv 설치" bash -c 'set -o pipefail; curl -LsSf https://astral.sh/uv/install.sh | sh'
     fi
     export PATH="$HOME/.local/bin:$PATH"
     cd "$REPO_DIR"
@@ -116,8 +146,7 @@ EOF
         warn ".venv 가 시스템 패키지를 보지 못합니다 → 다시 만듭니다"
         rm -rf .venv; uv venv --system-site-packages --python "$SYS_PY" >/dev/null
     fi
-    uv sync --group dev >/dev/null
-    ok "uv sync (evdev 포함)"
+    run_step "파이썬 패키지 설치 (uv sync, evdev 포함)" uv sync --group dev
     sudo udevadm control --reload-rules && sudo udevadm trigger || true
 
     step "5/5 도트 매트릭스용 SPI1 (헤더 핀 19/21/23/24/26)"
@@ -240,7 +269,10 @@ cmd_pair() {
     fi
     local mac=""
     # 이미 페어링된 패드가 있으면 그대로 연결만 시도
-    mac=$(bluetoothctl devices Paired 2>/dev/null | grep -i 'wireless controller' | head -1 | awk '{print $2}' || true)
+    # (bluez 5.64 의 bluetoothctl 에는 'devices Paired' 가 없어서 기기마다 info 로 확인한다)
+    for cand in $(bluetoothctl devices 2>/dev/null | grep -i 'wireless controller' | awk '{print $2}'); do
+        if bluetoothctl info "$cand" 2>/dev/null | grep -q 'Paired: yes'; then mac=$cand; break; fi
+    done
     if [[ -n "$mac" ]]; then
         ok "이미 페어링된 패드: $mac (PS 버튼을 누르면 자동 연결됩니다)"
     else
@@ -261,9 +293,14 @@ cmd_pair() {
         kill "$scan_pid" 2>/dev/null || true
         [[ -n "$mac" ]] || die "'Wireless Controller' 를 찾지 못했습니다. 라이트바가 빠르게 깜빡이는 상태(페어링 모드)에서 다시 실행하세요."
         ok "발견: $mac"
-        # DS4 는 페어링 모드에서 스스로 연결을 걸어온다. 먼저 trust 해서 그 연결을 받아들이고, 본딩(pair)은 되면 좋고 안 돼도 무방.
-        bluetoothctl --timeout 5  trust "$mac" 2>&1 | tail -1 | sed 's/^/  /' || true
-        bluetoothctl --timeout 20 pair "$mac"  2>&1 | grep -iE 'successful|fail|error' | tail -1 | sed 's/^/  /' || true
+        # 데스크톱의 블루투스 설정과 같은 순서: 페어링(키 저장) → 신뢰 → 연결. 에이전트가 살아 있어야 키가 저장되므로
+        # 명령마다 bluetoothctl 을 새로 띄우지 않고 한 세션에서 차례로 보낸다. (2026-11-18: trust 를 먼저 하고 명령을 따로
+        # 실행하던 방식은 "Pairing successful" 이 찍혀도 키가 남지 않아, 패드를 껐다 켜면 인증 실패로 다시 붙지 못했다)
+        { echo "agent NoInputNoOutput"; echo "default-agent"; sleep 1
+          echo "pair $mac"; sleep 12
+          echo "trust $mac"; sleep 1
+          echo "connect $mac"; sleep 6
+          echo "quit"; } | bluetoothctl >/dev/null 2>&1 || true
     fi
     for _ in $(seq 1 15); do
         bluetoothctl info "$mac" 2>/dev/null | grep -q 'Connected: yes' && break
@@ -273,8 +310,15 @@ cmd_pair() {
         bluetoothctl --timeout 20 connect "$mac" 2>&1 | grep -iE 'successful|fail|error' | tail -1 | sed 's/^/  /' || true
         sleep 2
     fi
-    if bluetoothctl info "$mac" 2>/dev/null | grep -q 'Connected: yes'; then
-        ok "연결됨. 이후에는 PS 버튼만 누르면 자동 재연결됩니다."
+    local info; info=$(bluetoothctl info "$mac" 2>/dev/null || true)
+    if grep -q 'Connected: yes' <<<"$info" && ! grep -q 'Paired: yes' <<<"$info"; then
+        # 연결은 됐지만 키가 저장되지 않은 상태: 지금은 동작해도 패드를 껐다 켜면 다시 붙지 못한다
+        fail "연결은 됐지만 페어링이 저장되지 않았습니다 (Paired: no). 패드를 껐다 켜면 다시 연결되지 않습니다."
+        echo "  기록을 지우고 다시 하세요:  bluetoothctl remove $mac  →  패드를 페어링 모드로 두고  bash scripts/jetson_setup.sh pair"
+        echo "  그래도 안 되면 Jetson 데스크톱의 블루투스 설정에서 'Wireless Controller' 를 눌러 연결하세요."
+        exit 1
+    elif grep -q 'Connected: yes' <<<"$info"; then
+        ok "연결됨, 페어링 저장됨. 이후에는 PS 버튼만 누르면 자동 재연결됩니다."
         echo "  매핑 확인:  uv run python -m common.inputs.ds4"
     else
         warn "아직 연결되지 않았습니다. 패드의 PS 버튼을 한 번 누른 뒤 확인:  bluetoothctl info $mac"
