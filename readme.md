@@ -23,7 +23,6 @@
 |---|---|---|
 | [collector/](collector/) | Jetson | 패드로 운전하며 사진 수집 → `dataset/<세션>/` |
 | [curator/](curator/) | PC | 세션 검토, 불량 사진 제외 → 데이터셋 zip |
-| [docs/](docs/) | | [Jetson 설정](docs/jetson-setup.md), [배선도](docs/wiring.pdf) |
 
 설정은 저장소 루트의 [config.yaml](config.yaml) 한 파일에 모여 있습니다. 조향 단계, 속도 단계, 저장 간격을 여기서 바꿉니다.
 
@@ -41,7 +40,7 @@ uv run python -m collector --check      # 점검: 카메라, 보드 두 장, 패
 uv run python -m collector              # 수집 시작
 ```
 
-SD 카드를 새로 구웠다면 [docs/jetson-setup.md](docs/jetson-setup.md) 의 설치 절차를 먼저 따릅니다.
+SD 카드를 새로 구웠다면 교수님이 나눠 주신 실습 자료의 설치 절차를 먼저 따릅니다.
 
 ### PC
 
@@ -101,4 +100,4 @@ scp -r gsc@192.168.50.119:~/course-autodrive/dataset/20261110_1906 ./dataset/
 | 서보용 | 0x40 | 채널 0 → 조향 서보 (LD-1501MG, 전원은 UBEC 6 V) |
 | 모터용 | 0x41 | 채널 0 속도, 채널 1 방향 → 모터 드라이버 (Cytron MDD10A) → 뒷바퀴 모터 2개 |
 
-전체 배선은 [docs/wiring.pdf](docs/wiring.pdf) 에 있습니다.
+전체 배선은 교수님이 나눠 주신 배선도를 따릅니다.
