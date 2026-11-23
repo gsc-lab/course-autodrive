@@ -498,7 +498,8 @@ def _main(argv: List[str]) -> int:
         print("\nCtrl+C → 종료")
     print("\n관측된 ABS 코드:", {f'0x{c:02x}': v for c, v in sorted(seen_abs.items())})
     print("관측된 KEY 코드:", [f"0x{c:03x}" for c in sorted(seen_key)])
-    print("각 버튼이 기대한 역할로 해석되지 않으면 config.yaml 의 input.ds4.layout 또는 codes 를 조정하세요.")
+    print("각 버튼이 기대한 역할로 해석되지 않으면 config.yaml 의 input.ds4 아래에 layout 또는 codes 를 적어 맞추세요 "
+          "(기본값은 layout: auto, codes: {}. 예: codes: {record: 0x132}).")
     return 0
 
 

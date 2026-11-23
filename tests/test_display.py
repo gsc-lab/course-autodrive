@@ -1,7 +1,7 @@
 """상태 표시 화면 생성(순수 함수)과 MAX7219 드라이버를 가짜 SPI 로 검증한다."""
 import pytest
 
-from common.config import DEFAULT_CONFIG_PATH, ConfigError, load_config
+from common.config import DEFAULT_CONFIG_PATH, ConfigError, config_snapshot, load_config
 from common.display import NullDisplay, create_display
 from common.display.base import DisplayState
 from common.display.glyphs import BLANK, CROSS, DISC, FULL, RING, flip_horizontal, render, rotate
@@ -88,7 +88,7 @@ def test_create_display_falls_back_to_null(tmp_path):
 
 def test_display_config_validation(tmp_path):
     import yaml
-    base = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8"))
+    base = config_snapshot(load_config(DEFAULT_CONFIG_PATH))
     assert base["display"]["enabled"] is True and base["display"]["spi_dev"] == "/dev/spidev0.0"
     for key, bad in (("rotate", 45), ("intensity", 16), ("driver", "ws2812"), ("blink_hz", 0)):
         cfg = yaml.safe_load(yaml.safe_dump(base))

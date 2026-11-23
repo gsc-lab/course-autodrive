@@ -51,7 +51,7 @@ def show(angle: int, low, high, straight) -> None:
 def main() -> int:
     import termios
     import tty
-    cfg = load_config()
+    cfg = load_config(program="collector")
     sv = cfg.hardware.servo
     sv.backlash_comp_deg = 0          # 한계를 잴 때는 유격 보정을 끈다 (지나치는 동작이 한계를 넘을 수 있다)
     v = JetsonVehicle(cfg.hardware, 90)

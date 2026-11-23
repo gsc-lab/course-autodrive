@@ -155,6 +155,9 @@ def test_thumbnail_from_an_older_worker_is_ignored(win):
 
 
 def test_unreadable_photo_does_not_break_navigation(win):
+    # 썸네일 작업자가 그 파일을 읽는 순간에는 Windows 가 지우게 두지 않는다 (WinError 32). 작업자를 먼저 멈춘다:
+    # 이 테스트가 보려는 것은 사라진 사진으로 이동했을 때의 화면이다. (바쁜 PC 에서 30번에 한 번쯤 실패했다, 2026-11-23)
+    win._stop_thumbs()
     os.remove(win.session_dir / win.frames[3].name)
     win.goto(3)                                             # 예외 없이 이동하고, 읽지 못했다고 알려 준다
     assert win.index == 3 and win.view.pixmap is None and "읽을 수 없습니다" in win.view.message

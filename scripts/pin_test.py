@@ -10,7 +10,8 @@
                                                    채널 PWM 핀 ↔ GND 핀 DC 평균 약 0.25 V, 서보 커넥터 신호선에서도 같으면 신호 도달
   uv run python scripts/pin_test.py all            motor + servo
 
-설정은 config.yaml 의 hardware 절을 따른다 (서보용 0x40 채널 0, 모터용 0x41 채널 0=속도·1=방향).
+보드 주소와 채널은 설정의 hardware 절을 따른다 (기본값: 서보용 0x40 채널 0, 모터용 0x41 채널 0=속도·1=방향).
+지금 쓰이는 값은 `uv run python -m common.config` 로 본다. config.yaml 에 없는 값은 기본값이다.
 보드가 응답하지 않으면 `scan` 으로 먼저 어느 보드가 안 보이는지 가린다. 40 만 보이면 보드 사이 케이블이나 A0 납땜,
 둘 다 안 보이면 Jetson 핀 1/3/5/6 케이블과 i2c 그룹 권한이다.
 """
@@ -100,7 +101,7 @@ def main(argv) -> int:
         if a.startswith("--backlash="):
             backlash = float(a.split("=", 1)[1]); argv.remove(a)
     mode = argv[1] if len(argv) > 1 else "all"
-    cfg = load_config()
+    cfg = load_config(program="collector")
     if mode == "scan":
         return mode_scan(cfg)
     if backlash is not None:

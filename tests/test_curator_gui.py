@@ -55,6 +55,81 @@ def test_runs_groups_consecutive_flags():
     assert runs([]) == [] and runs([False]) == []
 
 
+def test_crop_lines_are_dragged_shown_saved_and_undone(qapp, tmp_path):
+    """자르는 범위: 사진 위의 선을 끌면 모델이 보는 사진이 바뀌고, curation.json 과 데이터셋 zip 에 적힌다."""
+    import json
+    from PySide6.QtCore import QPoint, QSize, Qt
+    from PySide6.QtTest import QTest
+    d = make_session(tmp_path / "in", n=12, mark=(2, 3))
+    cfg = load_config(DEFAULT_CONFIG_PATH)
+    cfg.recording.root = str(tmp_path / "in")
+    win = MainWindow(cfg)
+
+    def drag(which, ratio):
+        r = win.view.image_rect()
+        x, y0, y1 = int(r.center().x()), int(round(win.view.line_y(which))), int(round(r.top() + r.height() * ratio))
+        QTest.mousePress(win.view, Qt.LeftButton, Qt.NoModifier, QPoint(x, y0))
+        for y in ((y0 + y1) // 2, y1):
+            QTest.mouseMove(win.view, QPoint(x, y))
+        QTest.mouseRelease(win.view, Qt.LeftButton, Qt.NoModifier, QPoint(x, y1))
+        qapp.processEvents()
+
+    saved = lambda: json.loads((d / "curation.json").read_text(encoding="utf-8")).get("preprocess")
+    try:
+        win.resize(1480, 920); win.show(); qapp.processEvents()
+        assert win.view.crop is None and not win.crop_reset_btn.isEnabled()     # 세션을 열기 전에는 선이 없다
+        win.open_paths([str(d)]); qapp.processEvents()
+        assert win.view.crop == win.ws.crop == (0.4, 1.0) and win.crop_reset_btn.isEnabled()
+        assert win.model_view.pixmap().size() == QSize(200, 66)                # 모델이 보는 사진 = 모델 입력 크기 그대로
+        assert win.crop_label.text().startswith("위쪽 40% · 아래쪽 0% 잘라 냄")
+        before = win.model_view.pixmap().toImage()
+
+        drag("top", 0.2)
+        assert win.ws.crop == (0.2, 1.0) and win.view.crop == (0.2, 1.0) and win.ws.crop_chosen
+        assert saved() == {"crop_top_ratio": 0.2, "crop_bottom_ratio": 1.0}     # 놓는 순간 저장된다
+        assert "위쪽 20%" in win.statusBar().currentMessage() and win.crop_label.text().startswith("위쪽 20%")
+        assert len(win._history) == 1                                           # 끌기 한 번 = 되돌리기 한 번
+        drag("bottom", 0.8)
+        assert win.ws.crop == (0.2, 0.8) and saved() == {"crop_top_ratio": 0.2, "crop_bottom_ratio": 0.8}
+        drag("bottom", 0.05)                                                    # 위 선을 넘지 못한다
+        assert win.ws.crop == (0.2, 0.3)
+        drag("bottom", 0.8)
+        assert win.model_view.pixmap().size() == QSize(200, 66) and win.model_view.pixmap().toImage() == before  # 한 색 사진
+
+        r = win.view.image_rect()                                               # 누르기만 하고 놓으면 아무 일도 없다
+        at = QPoint(int(r.center().x()), int(round(win.view.line_y("top"))))
+        depth = len(win._history)
+        QTest.mousePress(win.view, Qt.LeftButton, Qt.NoModifier, at); QTest.mouseRelease(win.view, Qt.LeftButton, Qt.NoModifier, at)
+        QTest.mouseClick(win.view, Qt.LeftButton, Qt.NoModifier, QPoint(int(r.center().x()), int(r.center().y())))   # 선이 아닌 곳
+        assert win.ws.crop == (0.2, 0.8) and len(win._history) == depth
+
+        win.goto(5); win.exclude_selection()                                    # 제외와 범위 변경이 한 줄로 되돌려진다
+        assert saved() == {"crop_top_ratio": 0.2, "crop_bottom_ratio": 0.8} and win.ws.is_excluded(win.frames[5])
+        win.undo(); assert not win.ws.is_excluded(win.frames[5]) and win.ws.crop == (0.2, 0.8)
+        win.undo(); assert win.ws.crop == (0.2, 0.3)
+        win.undo(); win.undo(); assert win.ws.crop == (0.2, 1.0)
+        win.undo()
+        assert win.ws.crop == (0.4, 1.0) and not win.ws.crop_chosen and saved() is None    # 처음 상태: 정한 적 없음
+        win.undo(); assert "되돌릴 것이 없습니다" in win.statusBar().currentMessage()
+
+        win.toggle_crop_lines()                                                 # 선을 숨겨도 범위는 그대로다
+        assert win.view.crop is None and win.ws.crop == (0.4, 1.0) and win.crop_show_btn.text() == "선 보이기"
+        win.toggle_crop_lines(); assert win.view.crop == (0.4, 1.0) and win.crop_show_btn.text() == "선 숨기기"
+        win.reset_crop(); assert "이미 기본 범위" in win.statusBar().currentMessage() and not win._history
+        drag("top", 0.1); win.reset_crop()
+        assert win.ws.crop == (0.4, 1.0) and saved() == {"crop_top_ratio": 0.4, "crop_bottom_ratio": 1.0}   # 이번에는 정한 값이다
+        win.undo(); assert win.ws.crop == (0.1, 1.0)
+        with zipfile.ZipFile(build_dataset(win.ws, tmp_path / "out")) as z:
+            assert json.loads(z.read("meta.json"))["preprocess"] == {"crop_top_ratio": 0.1, "crop_bottom_ratio": 1.0}
+        from curator.app import BuildDoneDialog
+        done = BuildDoneDialog(d / "curation.json", 9, 3, 1, win, crop=win.ws.crop)
+        assert any("위쪽 10% · 아래쪽 0% 잘라 냄" in lab.text() for lab in done.findChildren(type(win.crop_label)))
+        done.close()
+        qapp.processEvents()
+    finally:
+        win.close()
+
+
 def test_window_opens_navigates_excludes_and_builds(qapp, tmp_path):
     d = make_session(tmp_path / "in", n=12, mark=(2, 3))
     cfg = load_config(DEFAULT_CONFIG_PATH)

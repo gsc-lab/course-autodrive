@@ -14,10 +14,11 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-I2C_BUS=7                    # Jetson 핀 3/5 (config.yaml hardware.pca9685.bus 와 같아야 함)
-ADDR_SERVO=40                # 서보용 PCA9685 (config.yaml hardware.pca9685.address)
-ADDR_MOTOR=41                # 모터용 PCA9685, A0 납땜 (config.yaml hardware.pca9685_motor.address)
-SPI_DEV=/dev/spidev0.0       # 도트 매트릭스 (config.yaml display.spi_dev). SPI1 CS0 = 헤더 핀 19/23/24
+# 아래 네 값은 프로그램의 설정 기본값(common/config.py)과 같아야 한다. 확인: uv run python -m common.config
+I2C_BUS=7                    # Jetson 핀 3/5 (hardware.pca9685.bus)
+ADDR_SERVO=40                # 서보용 PCA9685 (hardware.pca9685.address)
+ADDR_MOTOR=41                # 모터용 PCA9685, A0 납땜 (hardware.pca9685_motor.address)
+SPI_DEV=/dev/spidev0.0       # 도트 매트릭스 (display.spi_dev). SPI1 CS0 = 헤더 핀 19/23/24
 JIO=/opt/nvidia/jetson-io
 SYS_PY=/usr/bin/python3      # JetPack 시스템 파이썬 (tensorrt 가 여기에 있다)
 NEED_RELOGIN=0
@@ -153,7 +154,7 @@ EOF
     if spi1_enabled; then
         ok "SPI1 이 이미 켜져 있음 ($SPI_DEV)"
     elif [[ ! -x "$JIO/config-by-function.py" ]]; then
-        warn "jetson-io 도구가 없어 SPI 를 켜지 못했습니다. 도트 매트릭스를 쓰지 않으면 config.yaml display.enabled: false"
+        warn "jetson-io 도구가 없어 SPI 를 켜지 못했습니다. 도트 매트릭스 없이도 주행은 된다 (경고만 남기고 표시 없이 달린다)"
     elif sudo "$JIO/config-by-function.py" -o dt spi1 >/dev/null 2>&1; then
         ok "jetson-io: spi1 추가 → 재부팅 필요"; NEED_REBOOT=1
     else

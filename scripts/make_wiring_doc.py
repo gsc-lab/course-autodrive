@@ -737,7 +737,7 @@ def build_html(figs: List[Diagram]) -> str:
 <tr><td class="k">조향 서보 LD-1501MG</td><td>앞바퀴 조향</td><td>검정 GND, 빨강 6 V, 흰색 신호</td></tr>
 <tr><td class="k">퓨즈 F1</td><td>과전류 차단</td><td>10 A. 주전원 스위치는 없다. 전원을 끊을 때는 주행 배터리 커넥터를 뽑는다</td></tr>
 <tr><td class="k">J2, J3</td><td>+ 분배, 공통 접지</td><td>WAGO 221 3구. 굵은 전원선만 물린다</td></tr>
-<tr><td class="k">도트 매트릭스 MAX7219</td><td>주행 상태 표시 (선택)</td><td>Jetson SPI 에 직결, 5 V. 없어도 주행에는 지장 없다 (<code>display.enabled: false</code>)</td></tr>
+<tr><td class="k">도트 매트릭스 MAX7219</td><td>주행 상태 표시 (선택)</td><td>Jetson SPI 에 직결, 5 V. 없어도 주행에는 지장 없다</td></tr>
 <tr><td class="k">J4, J5</td><td>모터 속도 신호(J4)와 방향 신호(J5)를 MDD10A 의 두 채널로 나눈다</td><td>WAGO 221 3구. 1번에 보드에서 온 선, 2·3번에 MDD10A 로 가는 선. 22AWG 또는 더 굵은 선만 물린다</td></tr>
 </tbody></table></div>
 <p>Jetson 헤더는 출력 구동력이 약해 서보를 직접 움직이지 못했으므로 신호는 모두 PCA9685 에서 냅니다. PCA9685 는 보드 하나가 한 주파수만 내므로 서보용(50 Hz)과 모터용(1.5 kHz)을 따로 둡니다.</p>
@@ -802,10 +802,9 @@ def build_html(figs: List[Diagram]) -> str:
 <tr><td class="id">1</td><td><code>uv run python scripts/pin_test.py scan</code></td><td>0x40 서보용 보드, 0x41 모터용 보드가 모두 "응답"</td><td>둘 다 없으면 Jetson 케이블(I1~I4), 0x41 만 없으면 보드 사이 케이블(C1~C4)과 A0 납땜(그림 4)</td></tr>
 <tr><td class="id">2</td><td><code>uv run python scripts/pin_test.py servo</code></td><td>서보가 60° → 120° → 90° 로 움직인다</td><td>안 움직이면 UBEC 출력(P5, G4)과 서보 커넥터(S1~S3) 방향. 5절 참조</td></tr>
 <tr><td class="id">3</td><td><code>uv run python scripts/pin_test.py motor</code></td><td>두 바퀴가 같은 방향으로 10초 돌고, 멈춘 뒤 반대 방향으로 10초 돈다</td><td>한 방향만 돌거나 정지 명령에 빨라지면 속도·방향 선이 바뀐 것(D1 과 D4). 한쪽만 안 돌면 그쪽 모터 전력선과 J4·J5 레버. 두 바퀴가 서로 반대로 돌면 한쪽 모터의 전력선 두 가닥을 맞바꾼다</td></tr>
-<tr><td class="id">4</td><td><code>uv run python scripts/dotmatrix_test.py status</code> (도트 매트릭스를 달았을 때)</td><td>정지 ■ → 전진 ▲ 와 속도 막대 → 후진 ▼ → 조향 점 좌우 → 녹화 모서리 점멸 → X 점멸</td><td>아무것도 안 켜지면 <code>bash scripts/jetson_setup.sh verify</code> 의 SPI 항목과 X1~X5. 화살표가 돌아가 있으면 <code>display.rotate</code></td></tr>
+<tr><td class="id">4</td><td><code>uv run python scripts/dotmatrix_test.py status</code> (도트 매트릭스를 달았을 때)</td><td>○ → ● 과 ○ 가 번갈아 → 화면 전체 켜짐 → X 깜빡임</td><td>아무것도 안 켜지면 <code>bash scripts/jetson_setup.sh verify</code> 의 SPI 항목과 X1~X5</td></tr>
 <tr><td class="id">5</td><td><code>uv run python -m collector --check</code></td><td>"점검 완료" 와 함께 서보가 중앙으로 한 번 움직인다</td><td>실패한 점검 이름(i2c_bus, pca9685:서보, pca9685:모터 …)과 메시지를 따라 고친다</td></tr>
 </tbody></table></div>
-<p>3번에서 전진 명령에 차가 뒤로 가면 선은 그대로 두고 <code>config.yaml</code> 의 <code>hardware.dir_forward_high</code> 를 <code>false</code> 로 바꿉니다.</p>
 
 <h2 class="pagebreak">5. 잘못 꽂기 쉬운 곳</h2>
 <div class="tablewrap"><table>

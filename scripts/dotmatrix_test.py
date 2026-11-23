@@ -31,7 +31,7 @@ PATTERNS = {
 
 def main(argv) -> int:
     mode = argv[1] if len(argv) > 1 else "demo"
-    cfg = load_config().display
+    cfg = load_config(program="collector").display
     if not os.path.exists(cfg.spi_dev):
         print(f"{cfg.spi_dev} 가 없습니다. SPI 를 켜세요:  bash scripts/jetson_setup.sh install  → 재부팅")
         return 2
@@ -66,7 +66,7 @@ def main(argv) -> int:
             print(f">>> {name}", flush=True)
             chip.show(rows); time.sleep(1.0)
         chip.show(PATTERNS["stop"]); time.sleep(1.0)
-        print("완료. 화살표 방향이 틀리면 config.yaml display.rotate / flip 을 조정한다")
+        print("완료. 화살표가 돌아가 보여도 고칠 것은 없다: 수집기가 쓰는 화면(○ ● X)은 돌리거나 뒤집어도 똑같다")
         return 0
     except KeyboardInterrupt:
         return 130

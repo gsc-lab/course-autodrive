@@ -2,13 +2,38 @@
 
 논리 방향: 음수 = 왼쪽, 양수 = 오른쪽. invert=false 이면 왼쪽이 낮은 각도(min 쪽)다.
 서보 장착 방향 때문에 반대로 꺾이면 config 의 steering.invert 만 바꾸면 된다.
-가공기의 화살표, 학습기의 좌우 플립 증강도 이 모델을 써야 한다.
+
+"각도 → 가장 가까운 클래스"와 "좌우 반전 때 클래스가 어떻게 바뀌는가"는 이 파일에만 있다
+(nearest_class_index, mirror_class_indices). 수집기, 가공기, 학습기가 모두 이것을 쓴다.
 """
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional, Sequence
 
 from common.config import SteeringConfig
+
+
+def nearest_class_index(angle: float, classes: Sequence[int]) -> int:
+    """각도에 가장 가까운 클래스의 번호. 두 클래스의 한가운데면 낮은 각도 쪽."""
+    return min(range(len(classes)), key=lambda i: (abs(classes[i] - angle), classes[i]))
+
+
+def mirror_class_indices(classes: Sequence[int], center: Optional[float] = None) -> List[int]:
+    """사진을 좌우로 뒤집었을 때 클래스 번호가 어떻게 바뀌는지. 예: 5 클래스면 [4, 3, 2, 1, 0].
+
+    왼쪽으로 30° 꺾은 사진을 뒤집으면 오른쪽으로 30° 꺾은 사진이 된다. 그래서 클래스가 직진 각도(center)를
+    가운데 두고 좌우 대칭일 때만 쓸 수 있다. 대칭이 아니면 ValueError.
+        center 90, 클래스 30 60 90 120 150   된다
+        center 90, 클래스 30 60 90 100 150   안 된다 (60 의 짝 120 이 없다)
+        center 90, 클래스 30 60 90           안 된다 (오른쪽 클래스가 없다: 뒤집은 사진에 붙일 라벨이 없다)
+    center 를 모르면(옛 데이터셋) 양 끝 클래스의 가운데를 직진으로 본다.
+    """
+    classes = list(classes)
+    k = len(classes)
+    axis2 = 2.0 * center if center is not None else float(classes[0] + classes[-1])     # 대칭 축의 두 배
+    if any(classes[i] + classes[k - 1 - i] != axis2 for i in range(k)):
+        raise ValueError(f"조향 클래스 {classes} 가 직진 각도 {axis2 / 2:g}° 를 가운데 두고 좌우 대칭이 아닙니다")
+    return [k - 1 - i for i in range(k)]
 
 
 class SteeringModel:
@@ -29,7 +54,7 @@ class SteeringModel:
 
     def quantize(self, angle: float) -> int:
         """가장 가까운 클래스. continuous 모드에서도 통계용으로 쓴다."""
-        return min(self.classes, key=lambda c: (abs(c - angle), c))
+        return self.classes[nearest_class_index(angle, self.classes)]
 
     def class_index(self, angle: float) -> int:
         return self.classes.index(self.quantize(angle))
@@ -80,12 +105,6 @@ class SteeringModel:
         i = self.classes.index(current) + (1 if d > 0 else -1)
         i = max(0, min(len(self.classes) - 1, i))
         return self.classes[i]
-
-    def mirror(self, angle: int) -> int:
-        """좌우 플립 증강용: 중앙 기준 대칭 각도. discrete 면 클래스로 양자화."""
-        mirrored = 2 * self.center - angle
-        mirrored = self.clamp(mirrored)
-        return self.quantize(mirrored) if self.mode == "discrete" else mirrored
 
 
 def recommend_steering(low_limit: int, high_limit: int, straight: int | None = None,

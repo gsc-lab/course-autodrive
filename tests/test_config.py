@@ -17,7 +17,7 @@ def test_default_config_loads():
 
 
 def _write(tmp_path: Path, override: dict) -> Path:
-    base = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8"))
+    base = config_snapshot(load_config(DEFAULT_CONFIG_PATH))        # 파일에 없는 값(기본값)까지 모두 든 dict
     for k, v in override.items():
         section, key = k.split(".")
         base[section][key] = v

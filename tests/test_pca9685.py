@@ -141,8 +141,8 @@ def test_vehicle_drives_two_pca9685_boards(fake_board):
 
 def test_servo_and_motor_cannot_share_one_pca9685(tmp_path):
     import yaml
-    from common.config import DEFAULT_CONFIG_PATH, ConfigError, load_config
-    base = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8"))
+    from common.config import DEFAULT_CONFIG_PATH, ConfigError, config_snapshot, load_config
+    base = config_snapshot(load_config(DEFAULT_CONFIG_PATH))
     base["hardware"]["pca9685_motor"]["address"] = base["hardware"]["pca9685"]["address"]
     p = tmp_path / "same.yaml"; p.write_text(yaml.safe_dump(base), encoding="utf-8")
     with pytest.raises(ConfigError, match="같은 PCA9685"):
@@ -151,8 +151,8 @@ def test_servo_and_motor_cannot_share_one_pca9685(tmp_path):
 
 def test_config_validation_for_pca9685(tmp_path):
     import yaml
-    from common.config import DEFAULT_CONFIG_PATH, ConfigError, load_config
-    base = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8"))
+    from common.config import DEFAULT_CONFIG_PATH, ConfigError, config_snapshot, load_config
+    base = config_snapshot(load_config(DEFAULT_CONFIG_PATH))
     for section, key, bad in (("servo", "pwm_hz", 0), ("pca9685", "channel", 16), ("pca9685", "address", 0x80),
                               ("pca9685_motor", "address", 0x80), ("pca9685_motor", "bus", -1)):
         cfg = yaml.safe_load(yaml.safe_dump(base))
@@ -289,8 +289,8 @@ def test_motor_second_channel_pair_can_be_disabled():
 
 def test_config_validation_for_second_motor_channels(tmp_path):
     import yaml
-    from common.config import DEFAULT_CONFIG_PATH, ConfigError, load_config
-    base = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8"))
+    from common.config import DEFAULT_CONFIG_PATH, ConfigError, config_snapshot, load_config
+    base = config_snapshot(load_config(DEFAULT_CONFIG_PATH))
     pm = base["hardware"]["pca9685_motor"]
     assert (pm["pwm_channel"], pm["dir_channel"], pm["pwm_channel_2"], pm["dir_channel_2"]) == (0, 1, -1, -1)
     for bad in ((2, 1), (0, 3), (2, -1), (16, 3)):

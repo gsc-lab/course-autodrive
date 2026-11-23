@@ -161,7 +161,7 @@ def test_session_writer_sync_thread_starts_and_stops(tmp_path):
 # ---------------------------------------------------------------- 설정
 def _cfg_with(tmp_path, edit):
     import yaml
-    data = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8"))
+    data = config_snapshot(load_config(DEFAULT_CONFIG_PATH))
     edit(data)
     p = tmp_path / "c.yaml"
     p.write_text(yaml.safe_dump(data), encoding="utf-8")

@@ -2,11 +2,13 @@
 
   uv run -m curator [세션 폴더 또는 zip ...]
 
-화면: 머리띠(로고·제목) → 도구 막대 → [왼쪽(세션, 현재 프레임) | 사진 + 조향 화살표 | 오른쪽(데이터셋 구성, 클래스 분포, 선택)]
-      → 타임라인(세션 경계·제외·선택·현재 위치를 한 줄에) → 필름스트립.
+화면: 머리띠(로고·제목) → 도구 막대 → [왼쪽(세션, 현재 프레임) | 사진 + 조향 화살표 + 자르는 선, 그 아래 모델이 보는 사진 |
+      오른쪽(데이터셋 구성, 클래스 분포, 선택)] → 타임라인(세션 경계·제외·선택·현재 위치를 한 줄에) → 필름스트립.
 용어: 세션 = 수집기를 한 번 실행해 생긴 폴더(파일로 남는다). 선택 = 한꺼번에 제외/복구하려고 고른 사진들(임시, 저장 안 됨).
 선택은 탐색기와 같다: Shift+←/→ 또는 Shift+클릭 = 연속, Ctrl+클릭 = 떨어진 낱장, Esc = 해제.
-제외 상태는 바뀔 때마다 세션 옆 curation.json 에 저장된다. 원본 사진은 건드리지 않는다. 단축키는 F1.
+자르는 범위: 사진 위의 가로선 두 개를 끌어 모델에 넣을 세로 범위를 정한다. 어둡게 덮인 부분이 잘려 나가고, 사진 아래의
+"모델이 보는 사진"이 그 결과다. 범위는 데이터셋에 하나이고 데이터셋 zip 에 적혀 학습기로 간다.
+제외 상태와 자르는 범위는 바뀔 때마다 세션 옆 curation.json 에 저장된다. 원본 사진은 건드리지 않는다. 단축키는 F1.
 """
 from __future__ import annotations
 
@@ -28,8 +30,9 @@ from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QFrame, QGrid
 import zipfile
 
 from common.config import Config
+from common.preprocess import describe_crop
 from curator.core import (REASON_MARK, AlreadyOpen, BrokenImage, Frame, NoFrames, SessionSource, Workspace,
-                          build_dataset, image_is_complete)
+                          build_dataset, image_is_complete, model_view)
 
 log = logging.getLogger("curator")
 
@@ -40,6 +43,7 @@ LOGO_PATH = Path(__file__).parent / "assets" / "yju-symbol-white.png"
 C_BG, C_PANEL, C_CARD, C_BORDER = "#16191f", "#1d2129", "#252a34", "#363c49"
 C_TEXT, C_MUTED, C_ACCENT, C_DANGER, C_OK, C_AMBER = "#e6e8ec", "#95a0b3", "#3b82f6", "#ef4444", "#22c55e", "#ffc400"
 C_HEADER = "#0f2747"
+C_CROP = "#22d3ee"          # 자르는 선
 SESSION_COLORS = ["#3b82f6", "#14b8a6", "#a855f7", "#f59e0b", "#ec4899", "#84cc16"]
 
 QSS = f"""
@@ -76,6 +80,9 @@ QListWidget#sessions::item:hover {{ border-color: #55607a; }}
 QListWidget#sessions::item:selected {{ background: #2c3446; border: 1px solid {C_ACCENT}; }}
 QLabel#sessName {{ font-weight: 700; font-size: 13px; }}
 QLabel#statValue {{ font-weight: 700; font-size: 14px; }}
+#modelbar {{ background: {C_PANEL}; border-top: 1px solid {C_BORDER}; }}
+#modelbar QLabel {{ background: transparent; }}
+QLabel#modelView {{ background: #0d0f13; border: 1px solid {C_BORDER}; color: {C_MUTED}; font-size: 11px; }}
 QListWidget#strip {{ background: {C_PANEL}; border-top: 1px solid {C_BORDER}; }}
 QListWidget#strip::item {{ color: {C_MUTED}; border: 2px solid transparent; border-radius: 4px; }}
 QListWidget#strip::item:selected {{ border: 2px solid {C_AMBER}; color: {C_TEXT}; background: #2b3140; }}
@@ -99,6 +106,8 @@ SHORTCUTS = [
             ("Ctrl+A", "전체 선택"), ("Esc", "선택 해제")]),
     ("제외 · 복구", [("Delete", "선택한 사진(없으면 현재 장) 제외"), ("Insert", "선택한 사진(없으면 현재 장) 복구"),
                  ("X", "현재 장 제외/복구 토글"), ("Ctrl+Z", "되돌리기")]),
+    ("자르는 범위", [("사진 위의 선 끌기", "모델에 넣을 범위(위 · 아래) 정하기. 어두운 부분이 잘려 나간다"),
+                 ("C", "자르는 선 보이기 · 숨기기")]),
     ("파일", [("Ctrl+O", "세션 폴더 열기"), ("Ctrl+Shift+O", "세션 zip 열기"), ("Ctrl+S", "지금 저장 (평소엔 자동 저장)"),
             ("Ctrl+B", "데이터셋 zip 만들기"), ("F1", "이 도움말")]),
 ]
@@ -127,6 +136,15 @@ def runs(flags: List[bool]) -> List[Tuple[int, int]]:
 # 큰 그림 + 화살표
 # ---------------------------------------------------------------------------
 class FrameView(QWidget):
+    """현재 사진 + 조향 화살표 + 자르는 선 두 개.
+
+    자르는 선(위, 아래)은 마우스로 끌 수 있다. 이 위젯은 "어느 선을 어디로 끌었다"만 알리고(crop_dragged),
+    값을 맞추고 저장하는 일은 창(MainWindow)이 한 뒤 set_crop 으로 돌려준다.
+    """
+    crop_dragged = Signal(str, float)       # 끄는 중: ("top" | "bottom", 사진 높이에 대한 비율)
+    crop_released = Signal()                # 끌기를 마쳤다
+    GRAB_PX = 9                             # 선에서 이만큼 안쪽을 누르면 그 선을 잡는다
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.pixmap: Optional[QPixmap] = None
@@ -134,14 +152,110 @@ class FrameView(QWidget):
         self.caption = ""
         self.excluded_reason: Optional[str] = None
         self.message = ""               # 사진이 없을 때 대신 보일 글 (비면 '세션 폴더를 여세요')
+        self.crop: Optional[Tuple[float, float]] = None     # 자르는 범위 (위, 아래). None 이면 선을 그리지 않는다
+        self._drag: Optional[str] = None                    # 끌고 있는 선
+        self._hover: Optional[str] = None                   # 마우스가 올라가 있는 선
         self.setMinimumSize(360, 270)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMouseTracking(True)     # 누르지 않아도 선 위에서 커서 모양을 바꾸려고
 
     def set_frame(self, pixmap: Optional[QPixmap], rotation: float, caption: str, excluded_reason: Optional[str],
                   message: str = "") -> None:
         self.pixmap, self.rotation, self.caption, self.excluded_reason = pixmap, rotation, caption, excluded_reason
         self.message = message
         self.update()
+
+    def set_crop(self, crop: Optional[Tuple[float, float]]) -> None:
+        self.crop = crop
+        if crop is None:
+            self._drag = self._hover = None
+            self.unsetCursor()
+        self.update()
+
+    # -- 자르는 선 ---------------------------------------------------------
+    def image_rect(self) -> Optional[QRectF]:
+        """사진이 그려지는 자리 (위젯 좌표). paintEvent 와 마우스 처리가 같은 자리를 쓴다."""
+        if self.pixmap is None or self.pixmap.isNull():
+            return None
+        s = self.pixmap.size().scaled(self.size(), Qt.KeepAspectRatio)
+        return QRectF((self.width() - s.width()) // 2, (self.height() - s.height()) // 2, s.width(), s.height())
+
+    def line_y(self, which: str) -> Optional[float]:
+        r = self.image_rect()
+        if r is None or self.crop is None:
+            return None
+        return r.top() + r.height() * self.crop[0 if which == "top" else 1]
+
+    def _line_at(self, pos: QPointF) -> Optional[str]:
+        r = self.image_rect()
+        if r is None or self.crop is None or not (r.left() <= pos.x() <= r.right()):
+            return None
+        near = min(("top", "bottom"), key=lambda w: abs(pos.y() - self.line_y(w)))
+        return near if abs(pos.y() - self.line_y(near)) <= self.GRAB_PX else None
+
+    def mousePressEvent(self, e) -> None:  # noqa: N802
+        if e.button() == Qt.LeftButton:
+            self._drag = self._line_at(e.position())
+            if self._drag:
+                self.update()
+                return
+        super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e) -> None:  # noqa: N802
+        if self._drag:
+            r = self.image_rect()
+            if r is not None and r.height() > 0:
+                self.crop_dragged.emit(self._drag, (e.position().y() - r.top()) / r.height())
+            return
+        hover = self._line_at(e.position())
+        if hover != self._hover:
+            self._hover = hover
+            if hover:
+                self.setCursor(Qt.SizeVerCursor)
+            else:
+                self.unsetCursor()
+            self.update()
+
+    def mouseReleaseEvent(self, e) -> None:  # noqa: N802
+        if self._drag and e.button() == Qt.LeftButton:
+            self._drag = None
+            self._hover = self._line_at(e.position())
+            if not self._hover:
+                self.unsetCursor()
+            self.update()
+            self.crop_released.emit()
+            return
+        super().mouseReleaseEvent(e)
+
+    def leaveEvent(self, e) -> None:  # noqa: N802
+        if self._hover and not self._drag:
+            self._hover = None
+            self.unsetCursor()
+            self.update()
+        super().leaveEvent(e)
+
+    def _paint_crop_lines(self, p: QPainter, r: QRectF) -> None:
+        """선 두 개와 꼬리표. 꼬리표는 잘려 나가는 쪽에 두고, 자리가 없으면 선의 반대쪽에 둔다."""
+        top, bottom = self.crop
+        f = QFont(); f.setPointSize(9); f.setBold(True); p.setFont(f)
+        fm = p.fontMetrics()
+        for which, ratio, text in (("top", top, f"위쪽 {top * 100:.0f}% 잘라 냄"),
+                                   ("bottom", bottom, f"아래쪽 {(1 - bottom) * 100:.0f}% 잘라 냄")):
+            ly = min(r.top() + r.height() * ratio, r.bottom() - 1)
+            active = which in (self._drag, self._hover)
+            p.setPen(QPen(QColor(0, 0, 0, 170), 4 if active else 3))
+            p.drawLine(QPointF(r.left(), ly), QPointF(r.right(), ly))
+            p.setPen(QPen(QColor("white" if active else C_CROP), 2))
+            p.drawLine(QPointF(r.left(), ly), QPointF(r.right(), ly))
+            w, h = fm.horizontalAdvance(text) + 16, 22
+            if which == "top":                          # 잘려 나가는 쪽은 선의 위. 사진 맨 위의 글 띠(30 px)와 겹치면 아래로
+                ty = ly - h - 3 if ly - h - 3 >= r.top() + 32 else ly + 3
+            else:                                       # 잘려 나가는 쪽은 선의 아래
+                ty = ly + 3 if ly + 3 + h <= r.bottom() else ly - h - 3
+            tag = QRectF(r.left() + 10, ty, w, h)
+            p.setPen(Qt.NoPen); p.setBrush(QColor("white" if active else C_CROP))
+            p.drawRoundedRect(tag, 4, 4)
+            p.setPen(QColor("#06262c")); p.drawText(tag, Qt.AlignCenter, text)
 
     def paintEvent(self, event) -> None:  # noqa: N802 (Qt 이름)
         p = QPainter(self)
@@ -156,6 +270,11 @@ class FrameView(QWidget):
         y = (self.height() - scaled.height()) // 2
         p.drawPixmap(x, y, scaled)
         p.setRenderHint(QPainter.Antialiasing)
+        if self.crop is not None:                       # 잘려 나가는 부분(모델이 보지 않는 부분)을 어둡게 덮는다.
+            shade = QColor(6, 8, 12, 125)               # 사진을 검토할 때 그 부분도 알아볼 수 있을 만큼만
+            cut_top, cut_bottom = scaled.height() * self.crop[0], scaled.height() * self.crop[1]
+            p.fillRect(QRectF(x, y, scaled.width(), cut_top), shade)
+            p.fillRect(QRectF(x, y + cut_bottom, scaled.width(), scaled.height() - cut_bottom), shade)
         length = scaled.height() * 0.35
         p.save()
         p.translate(x + scaled.width() / 2, y + scaled.height() - 12)
@@ -179,6 +298,8 @@ class FrameView(QWidget):
             badge = QRectF(x + scaled.width() - w - 10, y + 40, w, 30)
             p.setBrush(QColor(C_DANGER)); p.setPen(Qt.NoPen); p.drawRoundedRect(badge, 6, 6)
             p.setPen(QColor("white")); p.drawText(badge, Qt.AlignCenter, "✕  " + why)
+        if self.crop is not None:                       # 선은 맨 위에 그린다 (글 띠나 제외 표시에 가리지 않게)
+            self._paint_crop_lines(p, QRectF(x, y, scaled.width(), scaled.height()))
 
 
 # ---------------------------------------------------------------------------
@@ -584,7 +705,8 @@ def reveal_in_folder(path: Path) -> None:
 class BuildDoneDialog(QDialog):
     """데이터셋 작성 완료: 무엇이 어디에 만들어졌는지 보여 주고 바로 폴더를 열 수 있게 한다."""
 
-    def __init__(self, path: Path, included: int, excluded: int, sessions: int, parent=None):
+    def __init__(self, path: Path, included: int, excluded: int, sessions: int, parent=None,
+                 crop: Optional[Tuple[float, float]] = None):
         path = Path(path).resolve()
         super().__init__(parent)
         self.path = path
@@ -607,8 +729,10 @@ class BuildDoneDialog(QDialog):
             n = QLabel(label); n.setAlignment(Qt.AlignCenter); n.setObjectName("hint")
             bl.addWidget(v); bl.addWidget(n); stats.addWidget(box)
         lay.addLayout(stats)
-        info = QLabel(f"<table cellspacing='4'><tr><td style='color:{C_MUTED}'>파일</td><td><b>{path.name}</b></td></tr>"
-                      f"<tr><td style='color:{C_MUTED}'>위치</td><td>{path.parent}</td></tr></table>")
+        key = f"color:{C_MUTED}; white-space:nowrap; padding-right:8px"
+        crop_row = f"<tr><td style='{key}'>자르는 범위</td><td>{describe_crop(crop)}</td></tr>" if crop else ""
+        info = QLabel(f"<table cellspacing='4'><tr><td style='{key}'>파일</td><td><b>{path.name}</b></td></tr>"
+                      f"<tr><td style='{key}'>위치</td><td>{path.parent}</td></tr>{crop_row}</table>")
         info.setWordWrap(True); info.setTextInteractionFlags(Qt.TextSelectableByMouse)
         lay.addWidget(info)
         hint = QLabel("이 zip 을 학습(trainer)에 그대로 넣습니다. 원본 세션 폴더는 바뀌지 않았습니다."); hint.setObjectName("hint")
@@ -708,7 +832,11 @@ class MainWindow(QMainWindow):
         self.index = 0
         self.selected: set = set()                          # 선택한 프레임 번호 (임시, 저장 안 됨)
         self.anchor = 0                                     # Shift 연속 선택의 기준점
-        self._history: List[List[str]] = []                 # 되돌리기 순서: 한 번의 조작이 건드린 세션들
+        self._history: list = []                            # 되돌리기 순서. 제외·복구 = 건드린 세션 이름들,
+                                                            #   자르는 범위 = ("crop", 바꾸기 전 상태)
+        self.show_crop = True                               # 사진 위에 자르는 선을 보이는가
+        self._crop_before: Optional[tuple] = None           # 선을 끌기 시작할 때의 상태 (끌기 한 번 = 되돌리기 한 번)
+        self._cur_data: Optional[bytes] = None              # 지금 보고 있는 사진 파일의 내용 ("모델이 보는 사진"을 다시 그릴 때)
         self._thumbs: Dict[int, QPixmap] = {}
         self._flag_state: List[Optional[Tuple[bool, bool]]] = []
         self._session_span: Dict[str, Tuple[int, int]] = {}
@@ -773,7 +901,7 @@ class MainWindow(QMainWindow):
                      self._btn("zip 열기", "세션 zip 열기 (Ctrl+Shift+O)", self.open_zip_dialog)])
         group("제외 · 복구", [self._btn("제외", "선택한 사진(없으면 현재 장)을 데이터셋에서 제외 (Delete)", self.exclude_selection, "danger"),
                           self._btn("복구", "선택한 사진(없으면 현재 장)을 다시 포함 (Insert)", self.restore_selection),
-                          self._btn("되돌리기", "마지막 제외/복구 되돌리기 (Ctrl+Z)", self.undo)])
+                          self._btn("되돌리기", "마지막 제외/복구, 자르는 범위 변경 되돌리기 (Ctrl+Z)", self.undo)])
         self.play_btn = self._btn("▶ 재생", "자동 재생 · 정지 (Space)", self.toggle_play)
         self.play_btn.setMinimumWidth(78)
         seg = QFrame(); seg.setObjectName("seg")       # 배속: 네 칸 중 하나가 켜져 있는 선택 버튼
@@ -793,6 +921,8 @@ class MainWindow(QMainWindow):
 
         # 가운데: [왼쪽 = 무엇을 보고 있나 (세션, 현재 프레임)] [사진] [오른쪽 = 무엇이 데이터셋에 들어가나 (구성, 분포, 선택)]
         self.view = FrameView()
+        self.view.crop_dragged.connect(self._on_crop_dragged)
+        self.view.crop_released.connect(self._on_crop_released)
 
         def panel(name: str, width: int) -> Tuple[QScrollArea, QVBoxLayout]:
             inner = QWidget(); inner.setObjectName(name)
@@ -812,6 +942,7 @@ class MainWindow(QMainWindow):
         self.info = FrameInfoView()
         lay.addWidget(self.info); ll.addWidget(c)
 
+
         right, sl = panel("side", 348)
         c, lay = card("데이터셋 구성")
         self.summary = SummaryView(); lay.addWidget(self.summary)
@@ -825,8 +956,36 @@ class MainWindow(QMainWindow):
         self.range_label = QLabel(); self.range_label.setObjectName("value"); self.range_label.setWordWrap(True)
         lay.addWidget(self.range_label); sl.addWidget(c)
 
+        # 사진 바로 아래: 모델이 보는 사진 (위의 사진을 두 선 사이만 남기고 줄인 것). 옆 패널은 세로 자리가 모자라
+        # 스크롤해야 보이므로, 선을 끄는 동안 언제나 보이는 이 자리에 둔다
+        pc = self.cfg.preprocess
+        scale = min(1.0, self.MODEL_VIEW_MAX_H / pc.out_height)
+        self._model_view_size = QSize(max(1, round(pc.out_width * scale)), max(1, round(pc.out_height * scale)))
+        self.model_bar = QWidget(); self.model_bar.setObjectName("modelbar")
+        ml = QHBoxLayout(self.model_bar); ml.setContentsMargins(12, 8, 12, 8); ml.setSpacing(12)
+        self.model_view = QLabel(); self.model_view.setAlignment(Qt.AlignCenter); self.model_view.setObjectName("modelView")
+        self.model_view.setFixedSize(self._model_view_size.width() + 2, self._model_view_size.height() + 2)
+        ml.addWidget(self.model_view)
+        t = QLabel("모델이 보는 사진"); t.setObjectName("cardTitle")
+        self.crop_label = QLabel(); self.crop_label.setObjectName("value")
+        h = QLabel("사진 위의 두 선을 끌어 범위를 정합니다. 어두운 부분은 잘려 나갑니다."); h.setObjectName("hint")
+        for lab in (self.crop_label, h):                # 창이 좁으면 글이 잘릴 뿐, 옆의 사진이나 버튼을 덮지 않게
+            lab.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred); lab.setMinimumWidth(0)
+        self.crop_show_btn = self._btn("선 숨기기", "사진 위의 자르는 선 보이기 · 숨기기 (C)", self.toggle_crop_lines)
+        self.crop_reset_btn = self._btn("기본값", "자르는 범위를 처음 값으로 되돌린다", self.reset_crop)
+        for b in (self.crop_show_btn, self.crop_reset_btn):
+            b.setStyleSheet("padding: 3px 10px;")
+        head = QHBoxLayout(); head.setSpacing(6)
+        head.addWidget(t); head.addStretch(1); head.addWidget(self.crop_show_btn); head.addWidget(self.crop_reset_btn)
+        text = QVBoxLayout(); text.setSpacing(2)
+        text.addStretch(1); text.addLayout(head); text.addWidget(self.crop_label); text.addWidget(h); text.addStretch(1)
+        ml.addLayout(text, 1)
+        self.model_bar.setToolTip("위의 사진에서 두 선 사이만 남기고 줄인 것입니다. 모델은 이 사진만 보고 조향을 정합니다.")
+        center = QVBoxLayout(); center.setContentsMargins(0, 0, 0, 0); center.setSpacing(0)
+        center.addWidget(self.view, 1); center.addWidget(self.model_bar)
+
         mid = QHBoxLayout(); mid.setContentsMargins(0, 0, 0, 0); mid.setSpacing(0)
-        mid.addWidget(left); mid.addWidget(self.view, 1); mid.addWidget(right)
+        mid.addWidget(left); mid.addLayout(center, 1); mid.addWidget(right)
 
         # 아래: 타임라인 + 필름스트립
         self.timeline = Timeline(); self.timeline.seek.connect(lambda i, shift: self.goto(i, extend=shift))
@@ -848,7 +1007,7 @@ class MainWindow(QMainWindow):
         for key, fn in (("Ctrl+O", self.open_folder_dialog), ("Ctrl+Shift+O", self.open_zip_dialog), ("Ctrl+S", self.save),
                         ("Ctrl+B", self.build_dataset_dialog), ("Delete", self.exclude_selection),
                         ("Insert", self.restore_selection), ("X", self.toggle_current), ("Ctrl+Z", self.undo),
-                        ("Space", self.toggle_play), ("F1", self.show_shortcuts),
+                        ("Space", self.toggle_play), ("F1", self.show_shortcuts), ("C", self.toggle_crop_lines),
                         ("+", lambda: self.step_speed(1)), ("=", lambda: self.step_speed(1)), ("-", lambda: self.step_speed(-1)),
                         ("Ctrl+A", self.select_all), ("Escape", self.clear_selection)):
             a = QAction(self); a.setShortcut(QKeySequence(key)); a.triggered.connect(fn); self.addAction(a)
@@ -892,8 +1051,12 @@ class MainWindow(QMainWindow):
             self.goto(self._session_span[opened[0].name][0])
             empty = sum(len(s.empty) for s in opened)
             extra = f"  ·  저장되지 못한 빈 사진 {empty:,}장은 뺐습니다" if empty else ""
+            if self.ws.steering_differs_from_config:        # 차에서 조향 클래스를 바꿔 촬영한 세션: 촬영 설정을 따른다
+                extra += f"  ·  조향 클래스는 촬영할 때의 설정 {self.ws.steering.classes} 을 따릅니다"
+            if any(s.name in self.ws.crop_replaced for s in opened):    # 다른 범위가 적혀 있던 세션: 먼저 정해진 쪽을 따른다
+                extra += f"  ·  자르는 범위는 먼저 정한 값({describe_crop(self.ws.crop)})을 따릅니다"
             self.statusBar().showMessage(f"세션 {len(opened)}개를 열었습니다 (사진 {sum(len(s.frames) for s in opened):,}장){extra}",
-                                         10000 if empty else 4000)
+                                         10000 if extra else 4000)
         elif already and not problems:                      # 오류가 아니다: 그 세션으로 데려다주기만 한다
             self.goto(self._session_span[already[0]][0])
             self.statusBar().showMessage(f"이미 열려 있는 세션입니다: {', '.join(already)}", 4000)
@@ -912,6 +1075,7 @@ class MainWindow(QMainWindow):
             self.open_paths([f])
 
     SAVE_FAILED = "제외 목록을 저장하지 못했습니다 (폴더가 읽기 전용인지 확인하세요). 변경은 화면에만 남아 있습니다"
+    MODEL_VIEW_MAX_H = 96       # "모델이 보는 사진"은 실제 크기(preprocess.out_width × out_height)로 그린다. 이보다 크면 줄인다
 
     def _save(self) -> bool:
         """curation.json 저장. 실패해도 프로그램은 계속 쓴다 (읽기 전용 폴더, 동기화 프로그램이 잡고 있는 파일)."""
@@ -949,6 +1113,8 @@ class MainWindow(QMainWindow):
         self._refresh_counts()
         has = bool(self.frames)
         self.build_btn.setEnabled(has)
+        self.crop_show_btn.setEnabled(has); self.crop_reset_btn.setEnabled(has)
+        self._refresh_crop()
 
     def _refresh_sessions(self) -> None:
         self.sessions_list.clear()
@@ -1055,6 +1221,8 @@ class MainWindow(QMainWindow):
         if not self.frames:
             self.view.set_frame(None, 0.0, "", None)
             self.info.set_info(None)
+            self._cur_data = None
+            self._refresh_model_view()
             self.statusBar().showMessage("세션을 여세요  ·  단축키는 F1")
             return
         f = self.frames[self.index]
@@ -1063,8 +1231,10 @@ class MainWindow(QMainWindow):
             img = QImage.fromData(data) if image_is_complete(f.name, data) else QImage()
         except (OSError, KeyError, zipfile.BadZipFile) as e:
             log.warning("사진을 읽지 못했습니다: %s (%s)", f.key, e)
-            img = QImage()
+            data, img = b"", QImage()
         pm = QPixmap.fromImage(img) if not img.isNull() else None
+        self._cur_data = data if pm is not None else None
+        self._refresh_model_view()
         unreadable = "" if pm is not None else "사진을 읽을 수 없습니다  (파일이 지워졌거나 저장이 덜 됐습니다. Delete 로 제외하세요)"
         side = self.ws.steering.logical_side(f.info.angle)
         rot = arrow_rotation_deg(side, self.cfg.curator.arrow_max_deg, self.cfg.curator.arrow_invert)
@@ -1239,10 +1409,79 @@ class MainWindow(QMainWindow):
         if not self._history:
             self.statusBar().showMessage("되돌릴 것이 없습니다", 2000)
             return
-        for s in self._history.pop():
+        entry = self._history.pop()
+        if isinstance(entry, tuple):                    # ("crop", 바꾸기 전 상태): 자르는 범위를 되돌린다
+            self.ws.restore_crop_state(entry[1])
+            self._crop_changed(f"자르는 범위를 되돌렸습니다: {describe_crop(self.ws.crop)}")
+            return
+        for s in entry:
             if s in self.ws.curations:
                 self.ws.curations[s].undo()
         self._after_change("마지막 변경을 되돌렸습니다")
+
+    # -- 자르는 범위 -------------------------------------------------------
+    def _refresh_crop(self) -> None:
+        """자르는 범위나 선 표시가 바뀌었을 때: 사진 위의 선, 글, 모델이 보는 사진."""
+        has = bool(self.frames)
+        self.view.set_crop(self.ws.crop if (self.show_crop and has) else None)
+        self.crop_show_btn.setText("선 숨기기" if self.show_crop else "선 보이기")
+        pre = self.ws.preprocessor
+        self.crop_label.setText(f"{describe_crop(self.ws.crop)}  →  {pre.out_width}×{pre.out_height} 로 줄임"
+                                if has else "세션을 열면 여기에 보입니다")
+        self._refresh_model_view()
+
+    def _refresh_model_view(self) -> None:
+        """지금 사진을 지금 범위로 자르고 줄인 것. 학습기가 쓰는 전처리를 그대로 쓴다 (curator.core.model_view)."""
+        view = model_view(self._cur_data, self.ws.preprocessor) if self._cur_data else None
+        if view is None:
+            self.model_view.setPixmap(QPixmap())
+            self.model_view.setText("사진을 읽을 수 없습니다" if self.frames else "")
+            return
+        h, w, _ = view.shape
+        img = QImage(view.data, w, h, 3 * w, QImage.Format_RGB888).copy()       # copy: numpy 배열이 사라져도 남게
+        pm = QPixmap.fromImage(img)
+        if pm.size() != self._model_view_size:
+            pm = pm.scaled(self._model_view_size, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+        self.model_view.setPixmap(pm)
+
+    def _crop_changed(self, msg: str = "") -> None:
+        saved = self._save()                            # 제외 목록과 같은 curation.json 에 적힌다
+        self._refresh_crop()
+        msg = msg or f"자르는 범위: {describe_crop(self.ws.crop)}  ·  Ctrl+Z 로 되돌리기"
+        self.statusBar().showMessage(msg if saved else self.SAVE_FAILED, 4000 if saved else 10000)
+
+    def _on_crop_dragged(self, which: str, ratio: float) -> None:
+        if not self.frames:
+            return
+        if self._crop_before is None:                   # 끌기 시작: 되돌리기는 끌기 한 번을 한 단위로 한다
+            self._crop_before = self.ws.crop_state()
+        if self.ws.set_crop(**{which: ratio}):
+            self._refresh_crop()
+
+    def _on_crop_released(self) -> None:
+        before, self._crop_before = self._crop_before, None
+        if before is None:                              # 누르기만 하고 움직이지 않았다
+            return
+        if self.ws.crop == before[0]:                   # 끌었다가 제자리에 놓았다: 바뀐 것이 없다
+            self.ws.restore_crop_state(before)
+            return
+        self._history.append(("crop", before))
+        self._crop_changed()
+
+    def reset_crop(self) -> None:
+        if not self.frames:
+            return
+        before = self.ws.crop_state()
+        if not self.ws.set_crop(*self.ws.default_crop):
+            self.ws.restore_crop_state(before)
+            self.statusBar().showMessage("이미 기본 범위입니다", 3000)
+            return
+        self._history.append(("crop", before))
+        self._crop_changed()
+
+    def toggle_crop_lines(self) -> None:
+        self.show_crop = not self.show_crop
+        self._refresh_crop()
 
     # -- 데이터셋 ----------------------------------------------------------
     def build_dataset_dialog(self) -> None:
@@ -1275,7 +1514,7 @@ class MainWindow(QMainWindow):
         finally:
             dlg.close()
         self.statusBar().showMessage(f"데이터셋 작성 완료: {path.name}", 8000)
-        BuildDoneDialog(path, sum(inc.values()), sum(exc.values()), len(self.ws.sessions), self).exec()
+        BuildDoneDialog(path, sum(inc.values()), sum(exc.values()), len(self.ws.sessions), self, crop=self.ws.crop).exec()
 
     def closeEvent(self, event) -> None:  # noqa: N802
         self._play.stop()
@@ -1294,7 +1533,7 @@ def main(argv=None) -> int:
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     try:
-        cfg = load_config(args.config)
+        cfg = load_config(args.config, program="curator")
     except ConfigError as e:
         print(f"[설정 오류] {e}", file=sys.stderr)
         return 1

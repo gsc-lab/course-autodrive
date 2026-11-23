@@ -15,19 +15,26 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# PC 전용. gui = curator(PySide6, 수백 MB), train = trainer(torch cu128, 수 GB). pc = 둘 다
+# PC 전용. gui = curator(PySide6, 수백 MB), train = trainer(torch).
+# torch 는 둘 중 하나만 고른다: train = NVIDIA GPU 용(CUDA 12.8, 수 GB), train-cpu = GPU 없는 PC 용(수백 MB)
+#   GPU PC :  uv sync --extra gui --extra train
+#   노트북 :  uv sync --extra gui --extra train-cpu
 gui = [
     "PySide6>=6.7",
 ]
 train = [
-    "pillow>=10.0",
-    "pandas>=2.0",
-    "torch>=2.7",
-    "torchvision>=0.22",
+    "torch>=2.11,<2.12",          # GPU 용과 CPU 용이 같은 버전이 되게 묶는다 (cu128 인덱스의 최신이 2.11)
+    "torchvision>=0.26,<0.27",
     "onnx>=1.16",
+    "onnxruntime>=1.18",     # 내보낸 ONNX 가 PyTorch 와 같은 답을 내는지 확인
+    "matplotlib>=3.8",       # 학습 곡선, 혼동 행렬 그림
 ]
-pc = [
-    "course-autodrive[gui,train]",
+train-cpu = [
+    "torch>=2.11,<2.12",          # GPU 용과 CPU 용이 같은 버전이 되게 묶는다 (cu128 인덱스의 최신이 2.11)
+    "torchvision>=0.26,<0.27",
+    "onnx>=1.16",
+    "onnxruntime>=1.18",
+    "matplotlib>=3.8",
 ]
 
 [dependency-groups]
@@ -37,6 +44,10 @@ dev = ["pytest>=8.0"]
 # uv
 # ---------------------------------------------------------------------------
 [tool.uv]
+# GPU 용 torch 와 CPU 용 torch 는 같은 환경에 함께 깔 수 없다
+conflicts = [
+    [{ extra = "train" }, { extra = "train-cpu" }],
+]
 # 잠금 파일을 만들 때 고려할 환경: 개발 PC(Windows/x86-64 Linux)와 Jetson(aarch64 Linux)
 environments = [
     "sys_platform == 'win32' and platform_machine == 'AMD64'",
@@ -44,18 +55,25 @@ environments = [
     "sys_platform == 'linux' and platform_machine == 'aarch64'",
 ]
 
-# torch CUDA 빌드는 PyPI 가 아니라 PyTorch 인덱스에서 받는다 (PC 전용. Jetson 은 torch 를 쓰지 않음)
+# torch 는 PyPI 가 아니라 PyTorch 인덱스에서 받는다 (PC 전용. Jetson 은 torch 를 쓰지 않음)
 [[tool.uv.index]]
 name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
 [tool.uv.sources]
 torch = [
-    { index = "pytorch-cu128", marker = "sys_platform == 'win32' or (sys_platform == 'linux' and platform_machine == 'x86_64')" },
+    { index = "pytorch-cu128", extra = "train" },
+    { index = "pytorch-cpu", extra = "train-cpu" },
 ]
 torchvision = [
-    { index = "pytorch-cu128", marker = "sys_platform == 'win32' or (sys_platform == 'linux' and platform_machine == 'x86_64')" },
+    { index = "pytorch-cu128", extra = "train" },
+    { index = "pytorch-cpu", extra = "train-cpu" },
 ]
 
 [tool.pytest.ini_options]

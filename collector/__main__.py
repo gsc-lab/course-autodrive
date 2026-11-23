@@ -28,7 +28,7 @@ def main(argv=None) -> int:
     args = p.parse_args(argv)
 
     try:
-        cfg = load_config(args.config)
+        cfg = load_config(args.config, program="collector")    # 차가 읽는 절만 검사: 학습 값의 오타가 차를 세우지 않게
     except ConfigError as e:
         print(f"[설정 오류] {e}", file=sys.stderr)
         return 1

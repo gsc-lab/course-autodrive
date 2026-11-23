@@ -1,3 +1,5 @@
+import pytest
+
 from common.config import SteeringConfig
 from common.steering import SteeringModel
 
@@ -54,11 +56,17 @@ def test_continuous_mode():
     assert m.quantize(112) == 120 and m.class_index(112) == 3
 
 
-def test_mirror():
-    m = discrete()
-    assert m.mirror(30) == 150 and m.mirror(90) == 90
-    c = SteeringModel(SteeringConfig(mode="continuous"))
-    assert c.mirror(100) == 80
+def test_nearest_class_and_mirror_are_shared_helpers():
+    """수집기·가공기·학습기가 같은 함수를 쓴다: 한가운데 각도는 낮은 쪽, 대칭이 아닌 클래스는 뒤집을 수 없다."""
+    from common.steering import mirror_class_indices, nearest_class_index
+    classes = [30, 60, 90, 120, 150]
+    assert [nearest_class_index(a, classes) for a in (0, 44, 45, 46, 112, 200)] == [0, 0, 0, 1, 3, 4]
+    assert discrete().quantize(45) == 30 and discrete().quantize(75) == 60
+    assert mirror_class_indices(classes, center=90) == [4, 3, 2, 1, 0]
+    assert mirror_class_indices([40, 90, 140]) == [2, 1, 0]                 # 직진 각도를 모르면 양 끝의 가운데
+    for bad, center in (([30, 60, 90], 90), ([30, 60, 90, 100, 150], 90), (classes, 100)):
+        with pytest.raises(ValueError, match="대칭"):
+            mirror_class_indices(bad, center=center)
 
 
 def test_custom_seven_classes():

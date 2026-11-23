@@ -3,7 +3,7 @@ import sys
 
 import pytest
 
-from common.config import DEFAULT_CONFIG_PATH, ConfigError, load_config
+from common.config import DEFAULT_CONFIG_PATH, ConfigError, config_snapshot, load_config
 from common.events import EventKind as K
 from common.hw.checks import CheckResult, check_frame_size, check_i2c_bus, check_module, check_pca9685
 from common.inputs.base import InputDevice
@@ -80,7 +80,7 @@ def test_check_frame_size():
 
 def test_steering_range_must_fit_servo(tmp_path):
     import yaml
-    base = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8"))
+    base = config_snapshot(load_config(DEFAULT_CONFIG_PATH))
     base["hardware"]["servo"]["max_deg"] = 140
     p = tmp_path / "c.yaml"
     p.write_text(yaml.safe_dump(base), encoding="utf-8")
