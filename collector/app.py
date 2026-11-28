@@ -1,242 +1,55 @@
-"""수집기 메인 루프: 입력 → 상태 머신 → 차량 → (조건부) 프레임 저장 → 상태 표시."""
+"""수집기 메인 루프: 입력 → 상태 머신 → 차량 → (조건부) 프레임 저장 → 상태 표시.
+
+주 루프, 감시 스레드, 신호 처리, 종료 순서 같은 안전장치는 common/driveapp.py 의 DriveApp 에 있고 추론기와 함께 쓴다.
+여기에는 수집기만의 일(세션 기록, 사진 저장, 수집 화면)이 있다.
+"""
 from __future__ import annotations
 
 import logging
 import os
-import select
-import signal
-import sys
-import threading
-import time
 from datetime import datetime
-from typing import List, Optional
+from typing import Optional
 
-from common.camera import BaseCamera, create_camera
 from common.config import Config, config_snapshot
-from common.display import Display, DisplayState, create_display
-from common.hw import Vehicle, create_vehicle
-from common.hw.checks import CheckResult, check_disk, check_i2c_bus, check_input_group, check_module, check_pca9685
-from common.inputs import InputDevice, create_input
+from common.display import DisplayState
+from common.driveapp import (CAMERA_STALE_SEC, LOOP_HZ, STATUS_HZ, WATCHDOG_SEC, DriveApp,  # noqa: F401  (다시 내보낸다)
+                             DroppingStderrHandler, PreflightError, _fd_writable, _safe_write, preflight)
 from common.inputs.base import STATUS_ERROR, STATUS_IDLE, STATUS_RECORDING
 from common.session import SessionWriter
-from common.steering import SteeringModel
 from collector.state import DriveLogic
 
 log = logging.getLogger("collector")
 
-LOOP_HZ = 50
-STATUS_HZ = 5
 MARK_FLASH_SEC = 0.3    # □ 를 누르면 도트 매트릭스 전체가 이만큼 켜진다
-WATCHDOG_SEC = 1.0      # 주 루프가 이보다 오래 멈추면 감시 스레드가 모터를 끈다 (PCA9685 는 스스로 멈추지 않는다)
 FRAME_MAX_AGE_SEC = 0.5 # 이보다 오래된 카메라 프레임은 저장하지 않는다 (옛 그림에 지금의 조향 라벨이 붙지 않게)
-CAMERA_STALE_SEC = 2.0  # 카메라가 이만큼 새 프레임을 못 주면 고장으로 보고 정지한다
 
 
-class PreflightError(RuntimeError):
-    pass
+class Collector(DriveApp):
+    title = "수집"
+    log = log
 
-
-def _warn(r: CheckResult) -> CheckResult:
-    """실패를 경고로 낮춘다 (대체 수단이 있을 때)."""
-    return CheckResult(r.name, None, "[경고] " + r.message) if r.ok is False else r
-
-
-def preflight(cfg: Config, mock: bool, input_kind: str, ds4_soft: bool, skip: bool) -> List[CheckResult]:
-    """시작 전 점검. 실패 항목이 있으면 PreflightError.
-
-    ds4_soft: 패드 관련 점검 실패를 경고로만 남긴다 (키보드 대체가 허용된 경우).
-    """
-    results: List[CheckResult] = []
-    if skip:
-        return results
-    results.append(check_disk(cfg.recording.root, cfg.recording.min_free_gb))
-    if not mock:
-        hw = cfg.hardware
-        # I2C: 버스 접근 → 서보용 보드(0x40) → 모터용 보드(0x41). 어느 쪽이 빠졌는지 이름으로 구분된다
-        for bus in dict.fromkeys((hw.pca9685.bus, hw.pca9685_motor.bus)):
-            results.append(check_i2c_bus(bus))
-        results.append(check_pca9685(hw.pca9685.bus, hw.pca9685.address, "서보",
-                                     "Jetson 핀 1/3/5/6 ↔ 서보용 보드 VCC/SDA/SCL/GND 케이블(I1~I4)을 본다"))
-        results.append(check_pca9685(hw.pca9685_motor.bus, hw.pca9685_motor.address, "모터",
-                                     "서보용 보드만 보이면 보드 사이 케이블(C1~C4)과 A0 납땜(docs/wiring.pdf 그림 4)을 본다"))
-        if input_kind == "ds4":
-            for r in (check_module("evdev", "evdev"), check_input_group()):
-                results.append(_warn(r) if ds4_soft else r)
-    failed = [r for r in results if r.ok is False]
-    for r in results:
-        log.info("점검 %-14s %s  %s", r.name, {True: "OK", False: "FAIL", None: "--"}[r.ok], r.message)
-    if failed:
-        raise PreflightError("시작 전 점검 실패: " + "; ".join(f"{r.name}: {r.message}" for r in failed))
-    return results
-
-
-def _fd_writable(fd: int) -> bool:
-    """지금 fd 에 쓰면 멈추지 않는지. 아무도 읽지 않는 터미널(끊긴 채 매달린 SSH)이면 False."""
-    if not hasattr(select, "poll"):                       # Windows: 판단할 수 없으니 쓴다
-        return True
-    p = select.poll()
-    p.register(fd, select.POLLOUT)
-    return bool(p.poll(0))
-
-
-class DroppingStderrHandler(logging.Handler):
-    """화면(stderr)용 로그 핸들러. 쓸 수 없으면 그 줄을 버린다.
-
-    보통의 StreamHandler 는 끊긴 SSH 에서 영원히 멈춘다. 주 루프가 경고 한 줄을 쓰다 멈추면 차는 마지막 명령으로
-    계속 달리고, 감시 스레드도 같은 핸들러의 잠금을 기다리느라 멈춘다. 파일 로그(collector.log)는 그대로 남는다.
-    """
-
-    def __init__(self, fd: int = 2, level: int = logging.NOTSET):
-        super().__init__(level)
-        self.fd = fd
-
-    def emit(self, record: logging.LogRecord) -> None:
-        try:
-            data = (self.format(record) + "\n").encode(errors="replace")
-            if _fd_writable(self.fd):
-                os.write(self.fd, data)
-        except Exception:                                 # 로그 때문에 주행이 영향을 받으면 안 된다
-            pass
-
-
-def _safe_write(text: str) -> None:
-    """터미널에 상태를 쓰되 절대 멈추지 않는다.
-
-    SSH 가 '끊긴 채 닫히지 않으면'(Wi-Fi 끊김, 노트북 절전) 아무도 터미널을 읽지 않아 출력 버퍼가 몇 초 만에 가득 차고,
-    보통의 write 는 거기서 영원히 멈춘다. 그러면 주 루프가 서고 PCA9685 는 마지막 명령을 유지해 차가 계속 달린다
-    (2026-11-10 실제 발생). 그래서 쓰기 전에 버퍼에 자리가 있는지 보고, 없으면 그 줄을 버린다.
-    """
-    try:
-        fd = sys.stdout.fileno()
-    except (AttributeError, ValueError, OSError):
-        return
-    try:
-        if not _fd_writable(fd):
-            return                                        # 아무도 읽지 않는 터미널: 상태줄을 버린다
-        os.write(fd, text.encode(errors="replace"))
-    except (OSError, ValueError):                         # EIO/EPIPE: 터미널이 아예 사라짐
-        pass
-
-
-class Collector:
     def __init__(self, cfg: Config, mock: bool = False, input_override: Optional[str] = None,
                  skip_checks: bool = False, check_only: bool = False):
-        self.cfg = cfg
-        self.mock = mock
-        self.check_only = check_only
-        if mock:
-            cfg.hardware.backend = "mock"
-        # 입력 장치: 명시 지정 > (mock 이면 키보드) > 설정의 primary (실패 시 키보드 대체 가능)
-        override = input_override or ("keyboard" if mock else None)
-        input_kind = override or cfg.input.primary
-        ds4_soft = override is None and cfg.input.keyboard_fallback
-        preflight(cfg, mock or cfg.hardware.backend == "mock", input_kind, ds4_soft, skip_checks)
-
-        self.camera: Optional[BaseCamera] = None
-        self.vehicle: Optional[Vehicle] = None
-        self.display: Optional[Display] = None
         self.session: Optional[SessionWriter] = None
-        self.input: Optional[InputDevice] = None
-        steering = SteeringModel(cfg.steering)
-        self._flash_until = 0.0            # □ 를 누른 뒤 도트 매트릭스를 번쩍이는 마감 시각
-        try:
-            # 터미널 모드를 바꾸는 입력 장치는 마지막에 연다 — 앞 단계가 실패해도 터미널이 망가지지 않게
-            self.camera = create_camera(cfg.camera, mock=mock)
-            self.vehicle = create_vehicle(cfg.hardware, steering.center, (steering.min, steering.max))
-            self.display = create_display(cfg.display, mock=mock)     # 못 열면 NullDisplay (주행은 계속)
-            self.input = create_input(cfg.input, override)
-            self.logic = DriveLogic(cfg, requires_deadman=self.input.requires_deadman)
-            log.info("카메라 %s | 차량 %s | 표시 %s | 입력 %s", self.camera.props(), cfg.hardware.backend,
-                     self.display.name, self.input.name)
-            if check_only:
-                return
-            self.session = SessionWriter(
-                cfg.recording.root, config_snapshot(cfg), jpeg_quality=cfg.camera.jpeg_quality,
-                extra_meta={"input_device": self.input.name, "camera": self.camera.props(), "mock": mock},
-            )
-        except Exception:
-            self._release_resources()
-            raise
+        self._drop_warned = False           # '디스크가 느려 사진을 버린다'는 경고는 한 번만
+        super().__init__(cfg, mock=mock, input_override=input_override, skip_checks=skip_checks, check_only=check_only)
+        if not check_only:
+            log.info("세션 폴더: %s (입력: %s)", self.session.path, self.input.name)
 
-        self._applied_angle = steering.center
-        self._applied_speed = 0
-        self._applied_dir = None
-        self._status_last = 0.0
-        self._status_width = 0
-        self._install_signals()
-        log.info("세션 폴더: %s (입력: %s)", self.session.path, self.input.name)
+    def _make_logic(self) -> DriveLogic:
+        return DriveLogic(self.cfg, requires_deadman=self.input.requires_deadman)
 
-    # ------------------------------------------------------------------ 신호
-    def _install_signals(self) -> None:
-        def handler(signum, frame):
-            log.warning("시그널 %s 수신 → 정지 후 종료", signum)
-            self.logic.state.quit = True
-        for name in ("SIGTERM", "SIGINT"):
-            if hasattr(signal, name):
-                try:
-                    signal.signal(getattr(signal, name), handler)
-                except (ValueError, OSError):
-                    pass
-        # SIGHUP (SSH 가 닫힘): 패드로 조종할 때는 무시하고 계속 달린다 (2026-11-10 결정). 조종 신호는 블루투스로
-        # Jetson 에 직접 들어오고 상태는 도트 매트릭스로 보므로 터미널이 없어도 된다. 종료는 Options 버튼 또는 kill PID.
-        # 키보드 모드는 입력 자체가 SSH 로 오므로 닫히면 정지한다.
-        if hasattr(signal, "SIGHUP"):
-            try:
-                signal.signal(signal.SIGHUP, handler if self.input.name == "keyboard" else signal.SIG_IGN)
-            except (ValueError, OSError):
-                pass
-        self.survives_hangup = self.input.name != "keyboard"
+    def _open_outputs(self) -> None:
+        cfg = self.cfg
+        self.session = SessionWriter(
+            cfg.recording.root, config_snapshot(cfg), jpeg_quality=cfg.camera.jpeg_quality,
+            extra_meta={"input_device": self.input.name, "camera": self.camera.props(), "mock": self.mock},
+        )
+
+    def _extra_release_steps(self) -> list:
+        return [self.session.close] if self.session is not None else []
 
     # ------------------------------------------------------------------ 루프
-    def run(self) -> int:
-        st = self.logic.state
-        period = 1.0 / LOOP_HZ
-        self._print_help()
-        self._last_tick = time.monotonic()
-        threading.Thread(target=self._watchdog, name="watchdog", daemon=True).start()
-        try:
-            while not st.quit:
-                t0 = time.monotonic()
-                self._step(t0)
-                self._last_tick = time.monotonic()
-                dt = self._last_tick - t0
-                if dt < period:
-                    time.sleep(period - dt)
-        except Exception:
-            log.exception("수집 루프 예외")
-            st.error = st.error or "예외 발생"
-            st.quit = True                              # 감시 스레드도 끝낸다
-        finally:
-            self.close()
-        if st.error:
-            log.error("종료 원인: %s", st.error)
-            return 2
-        return 0
-
-    # ------------------------------------------------------------------ 감시
-    def _watchdog(self) -> None:
-        """주 루프가 어디선가 멈추면(터미널 쓰기, 카메라, 장치 호출 …) 모터만이라도 끈다."""
-        while not self.logic.state.quit:
-            time.sleep(0.2)
-            self._watchdog_check(time.monotonic())
-
-    def _watchdog_check(self, now: float) -> bool:
-        """주 루프가 WATCHDOG_SEC 이상 틱을 못 찍었고 모터가 돌고 있으면 즉시 정지하고 종료를 건다. 정지했으면 True."""
-        if now - self._last_tick <= WATCHDOG_SEC or self.vehicle is None or self.vehicle.state.speed == 0:
-            return False
-        st = self.logic.state
-        failure = None
-        try:
-            self.vehicle.stop(smooth=False)             # 가장 먼저. 아래의 로그 쓰기는 끊긴 터미널에서 막힐 수 있다
-        except Exception as e:
-            failure = e
-        st.error = st.error or "주 루프 멈춤 → 비상 정지"
-        st.quit = True
-        log.error("주 루프가 %.1f초 멈춤 → 감시 스레드가 비상 정지", now - self._last_tick)
-        if failure is not None:
-            log.error("비상 정지 실패: %s", failure)
-        return True
-
     def _step(self, now: float) -> None:
         logic, st, s = self.logic, self.logic.state, self.session
 
@@ -253,49 +66,28 @@ class Collector:
             self.input.notify(n)
         st.notifications.clear()
 
-        if (self.camera.error or self.camera.age(now) > CAMERA_STALE_SEC) and not st.error:
-            st.error = "카메라 프레임 수신 실패"
-            log.error(st.error)
+        if self._camera_failed(now):
             st.recording = False
-            logic.apply_stop()
-            st.quit = True
 
         self._apply_vehicle()
 
         if logic.should_save(now):
             frame, _ = self.camera.read()
             if frame is not None and self.camera.age(now) <= FRAME_MAX_AGE_SEC:   # 멈춘 카메라의 옛 그림은 저장하지 않는다
-                s.save_frame(frame, st.angle, logic.effective_speed, datetime.now())
+                # 파일은 뒤의 스레드가 쓴다 (기다리지 않는다). 디스크가 밀려 버렸으면 None: 주행은 그대로 하고 한 번만 알린다
+                if s.save_frame(frame, st.angle, logic.effective_speed, datetime.now()) is None and not self._drop_warned:
+                    self._drop_warned = True
+                    log.warning("디스크가 느려 사진을 저장하지 못하고 있습니다 (주행은 계속합니다). 끝날 때 버린 장수를 알려 줍니다")
                 logic.mark_saved(now)
 
-        if now - self._status_last >= 1.0 / STATUS_HZ:
-            self._status_last = now
+        if self._status_due(now):
             self.input.set_status(STATUS_ERROR if st.error else (STATUS_RECORDING if st.recording else STATUS_IDLE))
             self._print_status()
         self._update_display(now)           # 매 주기 (바뀐 화면만 전송된다). 깜빡임과 □ 번쩍임이 끊기지 않게
 
     def _update_display(self, now: float) -> None:
         st = self.logic.state
-        try:
-            self.display.update(DisplayState(recording=st.recording, error=bool(st.error),
-                                             flash=now < self._flash_until), now)
-        except OSError as e:                    # 표시 장치 통신 오류는 주행을 막지 않는다
-            log.warning("상태 표시 오류, 표시를 끕니다: %s", e)
-            self.display = __import__("common.display", fromlist=["NullDisplay"]).NullDisplay()
-
-    def _apply_vehicle(self) -> None:
-        logic, st = self.logic, self.logic.state
-        self.vehicle.service()                      # 조향 유격 보정의 두 번째 단계 등
-        if st.angle != self._applied_angle:
-            self.vehicle.set_steering(st.angle)
-            self._applied_angle = st.angle
-        speed, direction = logic.effective_speed, logic.effective_direction
-        if speed != self._applied_speed or direction != self._applied_dir:
-            if speed == 0:
-                self.vehicle.stop(smooth=self._applied_speed > 0)
-            else:
-                self.vehicle.set_throttle(speed, direction)
-            self._applied_speed, self._applied_dir = speed, direction
+        self._show(DisplayState(recording=st.recording, error=bool(st.error), flash=now < self._flash_until), now)
 
     # ------------------------------------------------------------------ 표시
     def _print_help(self) -> None:
@@ -314,39 +106,13 @@ class Collector:
         counts = " ".join(f"{a}:{s.counts.get(a, 0)}" for a in logic.steering.classes)
         bat = self.input.battery()
         bat_s = f" bat={bat}%" if bat is not None else ""
-        line = (f"[{rec}] a={st.angle:03d} v={logic.effective_speed:03d} {logic.effective_direction or 'stop':8s}{dead}"
-                f" | saved={s.saved} int={st.interval_sec:.1f}s | {counts}{bat_s}")
-        pad = max(0, self._status_width - len(line))
-        self._status_width = len(line)
-        _safe_write("\r" + line + " " * pad)
+        self._write_status(f"[{rec}] a={st.angle:03d} v={logic.effective_speed:03d} {logic.effective_direction or 'stop':8s}{dead}"
+                           f" | saved={s.saved} int={st.interval_sec:.1f}s | {counts}{bat_s}")
 
     # ------------------------------------------------------------------ 종료
-    def _release_resources(self) -> None:
-        """하드웨어 정지가 최우선. 나머지는 실패해도 계속 진행한다."""
-        steps = []
-        if self.vehicle is not None:
-            center = SteeringModel(self.cfg.steering).center
-            steps += [lambda: self.vehicle.stop(smooth=True),
-                      lambda: self.vehicle.set_steering(center),
-                      self.vehicle.close]
-        if self.camera is not None:
-            steps.append(self.camera.close)
-        if self.display is not None:              # 패드 끊김·오류로 끝나면 X 를 켜 둔 채 닫는다
-            logic = getattr(self, "logic", None)
-            failed = bool(logic is not None and logic.state.error)
-            steps.append(lambda: self.display.close(keep_error=failed))
-        if self.input is not None:
-            steps.append(self.input.close)
-        if self.session is not None:
-            steps.append(self.session.close)
-        for step in steps:
-            try:
-                step()
-            except Exception as e:  # 종료 중 오류는 로그만
-                log.warning("종료 단계 오류: %s", e)
-
     def close(self) -> None:
-        self._release_resources()
-        _safe_write("\r\n")
+        super().close()
         if self.session is not None:
-            log.info("세션 종료: %s (저장 %d장, 불량 표시 %d회)", self.session.path, self.session.saved, self.session.marks)
+            dropped = f", 디스크가 느려 버린 사진 {self.session.dropped}장" if self.session.dropped else ""
+            log.info("세션 종료: %s (저장 %d장, 불량 표시 %d회%s)", self.session.path, self.session.saved,
+                     self.session.marks, dropped)

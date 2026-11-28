@@ -97,6 +97,9 @@ class _PosixReader:
         new[3] &= ~(termios.ICANON | termios.ECHO | termios.ISIG)  # ISIG 끄면 Ctrl+C 가 키로 들어옴
         termios.tcsetattr(self.fd, termios.TCSANOW, new)
         fcntl.fcntl(self.fd, fcntl.F_SETFL, self.old_flags | os.O_NONBLOCK)
+        # 준비하는 동안 눌린 키는 버린다. 그대로 두면 프로그램이 준비되는 순간 한꺼번에 처리되어, 기다리다 눌러 본 ↑ 한 번에
+        # 차가 갑자기 출발한다 (추론기는 엔진을 만드느라 준비가 수십 초 걸리기도 한다).
+        termios.tcflush(self.fd, termios.TCIFLUSH)
 
     def read_keys(self) -> List[str]:
         try:
@@ -116,6 +119,8 @@ class _WindowsReader:
     def __init__(self):
         import msvcrt
         self.msvcrt = msvcrt
+        while msvcrt.kbhit():           # 준비하는 동안 눌린 키는 버린다 (_PosixReader 와 같은 이유)
+            msvcrt.getwch()
 
     def read_keys(self) -> List[str]:
         keys: List[str] = []

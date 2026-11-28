@@ -121,7 +121,7 @@ def test_baseline_is_the_accuracy_of_always_answering_the_most_common_class():
     lines = format_report(learned, ["30°", "90°", "150°"]).splitlines()
     at = next(i for i, line in enumerate(lines) if line.startswith("전체 정확도"))
     assert lines[at] == "전체 정확도        0.948   (110 / 116)"
-    assert lines[at + 1] == "기준선             0.724   (가장 많은 90° 만 답해도 나오는 정확도)"
+    assert lines[at + 1] == "기준선             0.724   (가장 많은 90°만 답할 때의 정확도)"
     assert lines[at + 2].startswith("한 칸 이내 정확도  ")
 
 
@@ -226,3 +226,49 @@ def test_report_columns_line_up_on_screen():
     start = lines.index("클래스별 지표") + 2
     assert len({width(line) for line in lines[start:start + 4]}) == 1          # 머리글 + 세 클래스
     assert width("클래스") == 6 and width("F1") == 2
+
+
+# ---------------------------------------------------------------------------
+# 도움말 (torch 없이 나온다)
+# ---------------------------------------------------------------------------
+def _help(argv, capsys, monkeypatch) -> str:
+    from trainer.__main__ import main
+    monkeypatch.setenv("COLUMNS", "80")
+    with pytest.raises(SystemExit) as stop:
+        main(argv)
+    assert stop.value.code == 0
+    return capsys.readouterr().out
+
+
+@pytest.mark.parametrize("argv", [["-h"], ["train", "-h"], ["test", "-h"], ["export", "-h"]])
+def test_help_is_korean_and_fits_an_80_column_terminal(argv, capsys, monkeypatch):
+    """argparse 는 글자 수로 줄을 접는다. 한글은 두 칸이라 맡겨 두면 80칸을 넘겨 줄이 흐트러지므로 줄을 직접 나눴다."""
+    out = _help(argv, capsys, monkeypatch)
+    assert out.startswith("사용법: uv run -m trainer")                 # 그대로 따라 칠 수 있는 명령
+    for english in ("usage:", "positional arguments", "options:", "show this help"):
+        assert english not in out
+    assert "\n예:\n  uv run -m trainer " in out and "-h, --help" in out
+    assert [line for line in out.splitlines() if width(line) > 79] == []
+
+
+def test_top_help_lists_every_command_and_no_command_shows_it(capsys, monkeypatch):
+    from trainer.__main__ import build_parser, main
+    top = _help(["-h"], capsys, monkeypatch)
+    commands = next(a for a in build_parser()._actions if a.dest == "command").choices
+    assert list(commands) == ["train", "test", "export"]
+    for name in commands:                                               # 명령 목록은 손으로 적은 글이다: 빠뜨리면 여기서 잡힌다
+        assert f"\n  {name} " in top.split("명령:\n", 1)[1].split("옵션:", 1)[0].join(["\n", ""])
+    assert main([]) == 2                                                # 명령 없이: 영어 오류 한 줄이 아니라 도움말 전체
+    assert capsys.readouterr().out == top
+    for argv, where in ((["train"], "uv run -m trainer train -h"), (["tset", "x"], "uv run -m trainer -h")):
+        with pytest.raises(SystemExit) as stop:                         # 잘못 쓰면 그 명령의 도움말을 보는 방법을 알려 준다
+            main(argv)
+        err = capsys.readouterr().err
+        assert stop.value.code == 2 and err.startswith("사용법: ") and f"\n도움말: {where}\n" in err and "\n오류: " in err
+
+
+def test_help_says_what_no_test_keeps(capsys, monkeypatch):
+    """--no-test 는 시험 분석을 미루는 것이지 test 사진을 학습에 돌리는 것이 아니다 (2026-11-24 에 그렇게 읽혔다)."""
+    out = _help(["train", "-h"], capsys, monkeypatch)
+    option = out.split("--no-test", 1)[1].split("--no-export", 1)[0]
+    assert "지금은 하지 않는다" in option and "떼어 둔 채로" in option and "test 명령" in option

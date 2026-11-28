@@ -202,7 +202,7 @@ def test_model_learns_a_learnable_dataset(trained):
     saved = json.loads((trained["run_dir"] / "test_metrics.json").read_text(encoding="utf-8"))["summary"]
     assert saved["baseline_angle"] == 30 and "baseline_class" not in saved
     report = (trained["run_dir"] / "test_report.txt").read_text(encoding="utf-8")
-    assert "기준선             0.200   (가장 많은 30° 만 답해도 나오는 정확도)" in report
+    assert "기준선             0.200   (가장 많은 30°만 답할 때의 정확도)" in report
     preds = list(csv.DictReader(open(trained["run_dir"] / "test_predictions.csv", encoding="utf-8")))
     assert len(preds) == 30 and {"true_angle", "pred_angle", "p_30", "p_150"} <= set(preds[0])
     assert sum(int(r["correct"]) for r in preds) == round(s["accuracy"] * 30)
@@ -317,10 +317,11 @@ def test_the_model_keeps_the_crop_it_was_trained_with(tmp_path):
     lines = []
     run_dir, samples = train([zip_path], cfg, name="crop", log=lines.append)
     assert samples.pre.crop == (0.3, 0.95)
-    assert any("자르는 범위: 위쪽 30% · 아래쪽 5% 잘라 냄 (가공 프로그램에서 정한 범위)" in line for line in lines)
+    assert any("자르는 범위: 위쪽 30% · 아래쪽 5% 잘라 냄 (가공 프로그램에서 지정)" in line for line in lines)
     # 클래스마다 12장씩이라 어느 클래스만 답해도 0.2 다 (60장을 42 / 9 / 9 로 나눈다: 8.4 → 8, 9 가 섞여 0.19~0.22)
-    note = next(line for line in lines if "만 답해도 정확도가" in line)
-    assert "참고: 가장 많은 30° 만 답해도 정확도가 train 0.2" in note and "val 0.2" in note and "이보다 높아야" in note
+    note = next(line for line in lines if "기준선 (" in line)
+    assert "기준선 (가장 많은 30°만 답할 때의 정확도): train 0.2" in note and "val 0.2" in note
+    assert note.endswith("이 값을 넘어야 학습된 것이다.")
     export(run_dir, log=lambda _m: None)
     meta = json.loads((run_dir / "model_meta.json").read_text(encoding="utf-8"))
     assert Preprocessor.from_dict(meta["preprocess"]).crop == (0.3, 0.95)           # 추론기가 읽는 방식 그대로
@@ -348,11 +349,11 @@ def test_the_model_keeps_the_crop_it_was_trained_with(tmp_path):
     lines.clear()
     run_dir, samples = train([plain], cfg, name="plain", log=lines.append)
     assert samples.pre.crop == (0.1, 0.5)
-    assert any("자르는 범위: 위쪽 10% · 아래쪽 50% 잘라 냄 (데이터셋에 범위가 없어 기본값을 씁니다)" in line for line in lines)
+    assert any("자르는 범위: 위쪽 10% · 아래쪽 50% 잘라 냄 (데이터셋에 값이 없어 기본값 사용)" in line for line in lines)
 
 
 def test_baseline_note_matches_what_the_epoch_table_measures(tmp_path):
-    """[2/7] 의 '참고:' 줄은 에폭 표의 train acc / val acc 와 견주는 값이다. 그 표가 재는 것과 같은 것을 말해야 한다.
+    """[2/7] 의 '기준선' 줄은 에폭 표의 train acc / val acc 와 견주는 값이다. 그 표가 재는 것과 같은 것을 말해야 한다.
 
     (1) train acc 는 좌우 반전된 사진으로 잰다. 가장 많은 각도가 직진이 아니면 반전 뒤에는 그 각도가 절반으로 줄어든다.
     (2) 가장 많은 각도는 묶음마다 다를 수 있다. 전체에서 가장 많은 각도의 비율을 val 에 그대로 적으면 0 이 나오기도 한다."""
@@ -378,13 +379,13 @@ def test_baseline_note_matches_what_the_epoch_table_measures(tmp_path):
         cfg.training.epochs = 1
         lines = []
         train([z], cfg, name="b", log=lines.append)
-        return next(line for line in lines if "참고:" in line and "답해도" in line)
+        return next(line for line in lines if "기준선 (" in line)
 
     plain = note(augment__hflip="none")                                     # 반전이 없으면 60° 가 그대로 가장 많다: 70 / 140
-    assert "가장 많은 60° 만 답해도 정확도가 train 0.500, val 0.500" in plain
+    assert "기준선 (가장 많은 60°만 답할 때의 정확도): train 0.500, val 0.500." in plain
     # 학습 묶음은 2 · 70 · 50 · 14 · 4 장. 반전 뒤 60° 는 (70 + 14) / 2 = 42, 90° 는 50 그대로 → 90° 가 가장 많다: 50 / 140
     flipped = note(augment__hflip="both")
-    assert "train 0.357 (90°), val 0.500 (60°)" in flipped and "한 가지 각도만 답해도" in flipped
+    assert "기준선 (가장 많은 각도만 답할 때의 정확도): train 0.357 (90°), val 0.500 (60°)." in flipped
     assert "train 0.357 (90°), val 0.500 (60°)" in note(augment__hflip="random")     # 기본값(절반 확률로 반전)도 같은 분포다
 
     # 묶음마다 가장 많은 각도가 다른 경우를 손으로 만든다: 전체는 60° 가 가장 많은데 val 에는 60° 가 한 장도 없다
@@ -516,6 +517,22 @@ def test_asymmetric_classes_stop_with_a_clear_message_when_flip_is_on(tmp_path):
     assert (run_dir / "model.onnx").is_file() and (run_dir / "test_report.txt").is_file()
     assert main(["test", str(run_dir), "--device", "cpu"]) == 0 and main(["export", str(run_dir)]) == 0
     assert main(["train", str(tmp_path / "missing.zip"), "--config", str(cfg_path)]) == 1
+
+
+def test_skipped_steps_keep_the_test_part_and_say_how_to_run_them_later(tmp_path, capsys):
+    """--no-test 는 시험 분석을 미룰 뿐이다: test 사진은 학습에 쓰지 않고 남아 있고, 나중에 하는 명령을 알려 준다."""
+    from trainer.__main__ import main
+    z = make_dataset_zip(tmp_path / "d.zip", per_class=6)
+    cfg_path = _config(tmp_path, output_root=str(tmp_path / "models"), device="cpu")
+    assert main(["train", str(z), "--config", str(cfg_path), "--epochs", "1", "--no-test", "--no-export"]) == 0
+    run_dir = next((tmp_path / "models").iterdir())
+    out = capsys.readouterr().out
+    assert f"uv run -m trainer test {run_dir}" in out and f"uv run -m trainer export {run_dir}" in out
+    assert not (run_dir / "test_report.txt").exists() and not (run_dir / "model.onnx").exists()
+    parts = [r["split"] for r in csv.DictReader(open(run_dir / "split.csv", encoding="utf-8"))]
+    assert parts.count("test") > 0 and parts.count("train") < len(parts) * 0.8      # test 는 떼어 둔 채다 (기본 70 %)
+    assert main(["test", str(run_dir), "--device", "cpu"]) == 0 and (run_dir / "test_report.txt").is_file()
+    assert main(["export", str(run_dir)]) == 0 and (run_dir / "model.onnx").is_file()
 
 
 # ---------------------------------------------------------------------------

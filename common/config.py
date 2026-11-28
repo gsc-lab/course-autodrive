@@ -254,6 +254,19 @@ class TrainingConfig:
 
 
 @dataclass
+class InferenceConfig:
+    """추론기(Jetson, uv run python -m inference models/<실행 이름>) 설정. 전처리와 조향 단계는 여기가 아니라 모델과 함께 온
+    model_meta.json 을 따른다."""
+    smoothing: str = "none"         # none | vote | ema. 예측이 사진마다 흔들릴 때 최근 예측을 모아서 고른다
+    window: int = 3                 # vote: 최근 몇 장의 다수결인지
+    ema_alpha: float = 0.5          # ema: 새 예측의 비중 (0 초과 1 이하. 클수록 빨리 따라간다)
+    max_frame_age_sec: float = 0.3  # 이보다 오래된 사진의 예측으로는 달리지 않는다 (자율주행을 끄고 선다)
+    speed_level: int = 0            # 자율주행의 처음 속도 단계: throttle.levels 의 번호 (0 = 가장 느림). D패드 ↑↓ 로 바꾼다
+    precision: str = "fp32"         # TensorRT 엔진의 정밀도: fp32 | fp16 (이 크기의 모델은 fp16 이 거의 빨라지지 않는다)
+    log: bool = True                # 사진마다의 예측을 dataset/drives/ 에 CSV 로 남긴다
+
+
+@dataclass
 class Config:
     schema_version: int = 1
     steering: SteeringConfig = field(default_factory=SteeringConfig)
@@ -267,6 +280,7 @@ class Config:
     curator: CuratorConfig = field(default_factory=CuratorConfig)
     preprocess: PreprocessConfig = field(default_factory=PreprocessConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
+    inference: InferenceConfig = field(default_factory=InferenceConfig)
     source_path: Optional[str] = None  # 어디서 읽었는지 (스냅샷에는 포함하지 않음)
 
 
@@ -485,11 +499,25 @@ def _check_training(cfg: Config) -> None:
     validate_training(cfg.training)
 
 
+def _check_inference(cfg: Config) -> None:
+    i = cfg.inference
+    _choice("inference.smoothing", i.smoothing, ("none", "vote", "ema"))
+    _choice("inference.precision", i.precision, ("fp32", "fp16"))
+    if not (1 <= i.window <= 30):
+        raise ConfigError(f"inference.window 는 1~30 이어야 합니다: {i.window}")
+    if not (0.0 < i.ema_alpha <= 1.0):
+        raise ConfigError(f"inference.ema_alpha 는 0 보다 크고 1 이하여야 합니다: {i.ema_alpha:g}")
+    if not (0.05 <= i.max_frame_age_sec <= 2.0):
+        raise ConfigError(f"inference.max_frame_age_sec 는 0.05~2 초여야 합니다: {i.max_frame_age_sec:g}")
+    if i.speed_level < 0:
+        raise ConfigError(f"inference.speed_level 은 0 이상이어야 합니다: {i.speed_level}")
+
+
 # 절 이름 → 그 절의 값 범위 검사. 여기에 없는 절(camera, safety)은 자료형만 본다 (_coerce).
 _CHECKS = {
     "steering": _check_steering, "throttle": _check_throttle, "hardware": _check_hardware, "recording": _check_recording,
     "input": _check_input, "display": _check_display, "curator": _check_curator, "preprocess": _check_preprocess,
-    "training": _check_training,
+    "training": _check_training, "inference": _check_inference,
 }
 
 # 프로그램마다 자기가 읽는 절만 검사한다. 차(수집기)가 PC 에서만 쓰는 학습 값의 오타 때문에 출발하지 못하거나, PC 프로그램이
@@ -498,6 +526,7 @@ PROGRAM_SECTIONS = {
     "collector": ("steering", "throttle", "hardware", "camera", "recording", "input", "safety", "display"),
     "curator": ("steering", "throttle", "camera", "recording", "curator", "preprocess"),
     "trainer": ("preprocess", "training"),
+    "inference": ("steering", "throttle", "hardware", "camera", "recording", "input", "safety", "display", "inference"),
 }
 
 

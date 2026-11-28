@@ -49,19 +49,20 @@ class _Fake(InputDevice):
 @pytest.mark.parametrize("input_name,expect_ignore", [("ds4", True), ("keyboard", False)])
 def test_sighup_ignored_only_for_pad_driving(tmp_path, monkeypatch, input_name, expect_ignore):
     import collector.app as app_mod
+    import common.driveapp as drive_mod
     cfg = load_config(DEFAULT_CONFIG_PATH)
     cfg.recording.root = str(tmp_path / "dataset")
     installed = {}
 
     def fake_signal(sig, handler):
         installed[sig] = handler
-    monkeypatch.setattr(app_mod.signal, "signal", fake_signal)
-    monkeypatch.setattr(app_mod, "create_input", lambda cfg_, override: _Fake(input_name))
+    monkeypatch.setattr(drive_mod.signal, "signal", fake_signal)
+    monkeypatch.setattr(drive_mod, "create_input", lambda cfg_, override: _Fake(input_name))
     if not hasattr(signal, "SIGHUP"):
-        monkeypatch.setattr(app_mod.signal, "SIGHUP", 1, raising=False)
+        monkeypatch.setattr(drive_mod.signal, "SIGHUP", 1, raising=False)
     col = app_mod.Collector(cfg, mock=True, skip_checks=True)
     try:
-        hup = installed[app_mod.signal.SIGHUP]
+        hup = installed[drive_mod.signal.SIGHUP]
         assert (hup is signal.SIG_IGN) == expect_ignore
         assert col.survives_hangup == expect_ignore
         assert callable(installed[signal.SIGTERM])        # 종료 명령(kill PID)은 항상 정지로 이어진다

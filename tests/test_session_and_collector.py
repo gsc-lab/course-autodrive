@@ -55,6 +55,7 @@ class ScriptedInput(InputDevice):
 
 def test_collector_end_to_end_with_mocks(tmp_path, monkeypatch):
     import collector.app as app_mod
+    import common.driveapp as drive_mod
     cfg = load_config(DEFAULT_CONFIG_PATH)
     cfg.recording.root = str(tmp_path / "dataset")
     cfg.recording.interval_sec = 0.1
@@ -63,7 +64,7 @@ def test_collector_end_to_end_with_mocks(tmp_path, monkeypatch):
     script = [E(K.DEADMAN, True), E(K.THROTTLE_AXIS, 1.0), E(K.STEER_AXIS, -1.0), E(K.RECORD_TOGGLE)]
     script += [E(K.STEER_AXIS, 0.0)] + [None] * 0
     scripted = ScriptedInput(script)
-    monkeypatch.setattr(app_mod, "create_input", lambda cfg_, kind: scripted)
+    monkeypatch.setattr(drive_mod, "create_input", lambda cfg_, kind: scripted)
 
     col = app_mod.Collector(cfg, mock=True, skip_checks=True)
     # 루프를 직접 돌린다: 0.6초 동안 → 0.1초 간격이면 5장 안팎

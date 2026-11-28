@@ -7,6 +7,7 @@ from common.events import InputEvent
 
 STATUS_IDLE = "idle"
 STATUS_RECORDING = "recording"
+STATUS_AUTO = "auto"            # 자율주행 중 (추론기)
 STATUS_ERROR = "error"
 
 
@@ -19,7 +20,7 @@ class InputDevice(ABC):
         """쌓인 입력을 이벤트 목록으로. 블로킹하지 않는다."""
 
     def set_status(self, status: str) -> None:
-        """idle | recording | error — 라이트바 등 표시 장치가 있으면 반영."""
+        """idle | recording | auto | error — 라이트바 등 표시 장치가 있으면 반영."""
 
     def notify(self, kind: str) -> None:
         """record_on | record_off | mark — 진동 등 촉각 알림."""

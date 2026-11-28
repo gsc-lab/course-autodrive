@@ -137,14 +137,14 @@ def fit(model: nn.Module, train_loader: DataLoader, val_loader: DataLoader, loss
             if history.best_epoch == 0:
                 raise
             history.interrupted = True
-            log(f"Ctrl+C: {epoch} 에폭 도중에 멈춥니다. 지금까지의 결과로 마무리합니다.")
+            log(f"Ctrl+C: {epoch} 에폭에서 중단. 지금까지의 결과로 마무리한다.")
             break
         scheduler.step()
 
         if not (math.isfinite(train_loss) and math.isfinite(val_loss)):
             history.diverged = True
             log(f"{epoch:>4}    {lr:>9.6f}  {train_loss:>10.4f}  {val_loss:>9.4f}")
-            log("손실이 nan/inf 가 되어 멈춥니다 (발산). 학습률(lr)을 낮추거나 rescale 을 minmax/standardize 로 두세요.")
+            log("발산: 손실이 nan/inf 가 되어 중단한다. 학습률(lr)을 낮추거나 rescale 을 minmax 또는 standardize 로 설정하세요.")
             break
 
         history.epoch.append(epoch); history.lr.append(lr)
@@ -160,14 +160,14 @@ def fit(model: nn.Module, train_loader: DataLoader, val_loader: DataLoader, loss
         else:
             waited += 1
         log(f"{epoch:>4}    {lr:>9.6f}  {train_loss:>10.4f}  {val_loss:>9.4f}  {train_acc:>9.3f}  {val_acc:>8.3f}"
-            + ("   ← 가장 좋음" if improved else ""))
+            + ("   ← 지금까지 최저" if improved else ""))     # val loss 기록을 새로 쓴 에폭. 마지막으로 붙은 에폭이 저장된다
 
         if early_stopping and waited >= patience:
             history.stopped_early = True
-            log(f"검증 손실이 {patience} 에폭 동안 나아지지 않아 멈춥니다 (조기 종료).")
+            log(f"조기 종료: val loss 가 {patience} 에폭 동안 낮아지지 않았다.")
             break
 
     model.load_state_dict(best_state)
     if history.best_epoch:
-        log(f"가장 좋았던 {history.best_epoch} 에폭의 가중치를 씁니다 (val loss {history.best_val_loss:.4f}).")
+        log(f"저장할 모델: val loss 가 가장 낮은 {history.best_epoch} 에폭 ({history.best_val_loss:.4f})")
     return history

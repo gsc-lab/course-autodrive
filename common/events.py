@@ -20,6 +20,7 @@ class EventKind(str, Enum):
     REVERSE_TOGGLE = "reverse_toggle"  # 키보드 ↓
     STOP = "stop"                      # Space / T
     SPEED_STEP = "speed_step"          # value: -1 | +1 (A/Z)
+    LEVEL_STEP = "level_step"          # value: -1 | +1 (D패드 ↓↑): 자율주행 속도 단계. 수집기는 쓰지 않는다
     DEADMAN = "deadman"                # value: True(누름) / False(뗌)  (L1)
     RECORD_TOGGLE = "record_toggle"    # ○ / R
     MARK = "mark"                      # □ / M

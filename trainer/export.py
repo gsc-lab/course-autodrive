@@ -56,7 +56,7 @@ def export(run_dir: str | Path, log: Callable[[str], None] = print) -> Path:
     shape_in, shape_out = meta["input"]["shape"], meta["output"]["shape"]
     log(f"      model.onnx ({onnx_path.stat().st_size / 1024:.0f} KB, opset {ONNX_OPSET}), model_meta.json")
     log(f"      입력 \"{INPUT_NAME}\" {shape_in} → 출력 \"{OUTPUT_NAME}\" {shape_out}")
-    log(f"      PyTorch 와 비교: 무작위 입력 {N_CHECK}개에서 모두 같은 답, 출력 최대 차이 "
+    log(f"      PyTorch 와 비교: 무작위 입력 {N_CHECK}개에서 예측이 모두 일치, 출력의 최대 차이 "
         f"{meta['onnx']['max_abs_diff_vs_pytorch']:.1e}")
     return onnx_path
 

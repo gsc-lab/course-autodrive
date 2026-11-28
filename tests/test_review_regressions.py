@@ -107,14 +107,15 @@ class _Closable(InputDevice):
 def test_init_failure_releases_resources(tmp_path, monkeypatch):
     """카메라 생성이 실패하면 이미 연 자원을 닫고 예외를 다시 던진다. 입력 장치는 마지막에 열리므로 터미널은 건드리지 않는다."""
     import collector.app as app_mod
+    import common.driveapp as drive_mod
     cfg = load_config(DEFAULT_CONFIG_PATH)
     cfg.recording.root = str(tmp_path / "dataset")
     opened = []
 
     def bad_camera(cfg_, mock=False):
         raise RuntimeError("카메라 없음")
-    monkeypatch.setattr(app_mod, "create_camera", bad_camera)
-    monkeypatch.setattr(app_mod, "create_input", lambda cfg_, override: opened.append(1) or _Closable())
+    monkeypatch.setattr(drive_mod, "create_camera", bad_camera)
+    monkeypatch.setattr(drive_mod, "create_input", lambda cfg_, override: opened.append(1) or _Closable())
     with pytest.raises(RuntimeError, match="카메라 없음"):
         app_mod.Collector(cfg, mock=True, skip_checks=True)
     assert opened == []           # 입력 장치는 열리지 않았다
@@ -122,10 +123,11 @@ def test_init_failure_releases_resources(tmp_path, monkeypatch):
 
 def test_init_failure_after_input_closes_input(tmp_path, monkeypatch):
     import collector.app as app_mod
+    import common.driveapp as drive_mod
     cfg = load_config(DEFAULT_CONFIG_PATH)
     cfg.recording.root = str(tmp_path / "dataset")
     dev = _Closable()
-    monkeypatch.setattr(app_mod, "create_input", lambda cfg_, override: dev)
+    monkeypatch.setattr(drive_mod, "create_input", lambda cfg_, override: dev)
 
     def bad_session(*a, **kw):
         raise OSError("디스크 쓰기 실패")
@@ -162,6 +164,7 @@ def test_fallback_to_keyboard_when_ds4_missing(monkeypatch):
 
 def test_collector_passes_none_override_so_fallback_can_happen(tmp_path, monkeypatch):
     import collector.app as app_mod
+    import common.driveapp as drive_mod
     cfg = load_config(DEFAULT_CONFIG_PATH)
     cfg.recording.root = str(tmp_path / "dataset")
     cfg.hardware.backend = "mock"
@@ -171,8 +174,8 @@ def test_collector_passes_none_override_so_fallback_can_happen(tmp_path, monkeyp
         seen["override"] = override
         return _Closable()
     from common.camera import MockCamera
-    monkeypatch.setattr(app_mod, "create_input", fake_create_input)
-    monkeypatch.setattr(app_mod, "create_camera", lambda cfg_, mock=False: MockCamera(cfg_))
+    monkeypatch.setattr(drive_mod, "create_input", fake_create_input)
+    monkeypatch.setattr(drive_mod, "create_camera", lambda cfg_, mock=False: MockCamera(cfg_))
     col = app_mod.Collector(cfg, mock=False, skip_checks=True)   # mock=False 이므로 override 가 None 이어야 대체 가능
     assert seen["override"] is None
     col.close()
@@ -180,9 +183,10 @@ def test_collector_passes_none_override_so_fallback_can_happen(tmp_path, monkeyp
 
 def test_close_survives_broken_stdout(tmp_path, monkeypatch):
     import collector.app as app_mod
+    import common.driveapp as drive_mod
     cfg = load_config(DEFAULT_CONFIG_PATH)
     cfg.recording.root = str(tmp_path / "dataset")
-    monkeypatch.setattr(app_mod, "create_input", lambda cfg_, override: _Closable())
+    monkeypatch.setattr(drive_mod, "create_input", lambda cfg_, override: _Closable())
     col = app_mod.Collector(cfg, mock=True, skip_checks=True)
     col.logic.apply(__import__("common.events", fromlist=["InputEvent"]).InputEvent(K.FORWARD_TOGGLE), 0)
     col._apply_vehicle()

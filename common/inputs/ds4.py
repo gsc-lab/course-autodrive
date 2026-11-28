@@ -10,7 +10,7 @@
   R2           전진 속도        L2        후진 속도 (녹화 안 됨)
   L1 (누름)    데드맨           ○         녹화 토글
   □            직전 N초 불량    △         조향 중앙
-  Options      종료
+  Options      종료             D패드 ↑↓  자율주행 속도 단계 (추론기만 쓴다. 수집기에서는 아무 일도 하지 않는다)
 
 보드에서 실제 코드를 확인하려면:  uv run python -m common.inputs.ds4
 """
@@ -27,7 +27,7 @@ from typing import Dict, List, Optional, Tuple
 from common.config import DS4Config
 from common.events import EventKind, InputEvent
 from common.hw.checks import find_ds4_lightbar_dirs
-from common.inputs.base import STATUS_ERROR, STATUS_IDLE, STATUS_RECORDING, InputDevice
+from common.inputs.base import STATUS_AUTO, STATUS_ERROR, STATUS_IDLE, STATUS_RECORDING, InputDevice
 
 log = logging.getLogger(__name__)
 
@@ -48,17 +48,17 @@ DS4_PRODUCTS = (0x09CC, 0x05C4)   # 2세대(CUH-ZCT2), 1세대(CUH-ZCT1)
 # 역할 → evdev 코드. 키 이름은 config input.ds4.codes 로 덮어쓸 수 있다.
 LAYOUTS: Dict[str, Dict[str, int]] = {
     "sony": {
-        "steer": ABS_X, "throttle": ABS_RZ, "reverse": ABS_Z, "dpad": ABS_HAT0X,
+        "steer": ABS_X, "throttle": ABS_RZ, "reverse": ABS_Z, "dpad": ABS_HAT0X, "dpad_y": ABS_HAT0Y,
         "deadman": BTN_TL, "record": BTN_EAST, "mark": BTN_WEST, "center": BTN_NORTH, "quit": BTN_START,
     },
     # hid-generic: DS4 HID 디스크립터 순서 그대로. 축: X,Y,Z(RX스틱),RZ(RY스틱),Hat,buttons,RX(L2),RY(R2)
     # 버튼 1..14 = □ × ○ △ L1 R1 L2 R2 Share Options L3 R3 PS Touch → BTN_GAMEPAD(0x130)+n-1
     "generic": {
-        "steer": ABS_X, "throttle": ABS_RY, "reverse": ABS_RX, "dpad": ABS_HAT0X,
+        "steer": ABS_X, "throttle": ABS_RY, "reverse": ABS_RX, "dpad": ABS_HAT0X, "dpad_y": ABS_HAT0Y,
         "deadman": BTN_WEST, "record": BTN_C, "mark": BTN_SOUTH, "center": BTN_NORTH, "quit": BTN_TR2,
     },
 }
-COLORS = {STATUS_IDLE: (0, 0, 255), STATUS_RECORDING: (255, 0, 0), STATUS_ERROR: (255, 0, 0)}
+COLORS = {STATUS_IDLE: (0, 0, 255), STATUS_RECORDING: (255, 0, 0), STATUS_AUTO: (0, 255, 0), STATUS_ERROR: (255, 0, 0)}
 
 # 표시용: 레이아웃별로 각 코드가 패드의 어떤 입력인지 (쓰지 않는 것도 포함). 2026-11-04 실기 확인: generic 의 ○□△L1 Options R2.
 BUTTON_NAMES = {
@@ -98,7 +98,7 @@ class DS4Mapper:
         self.absinfo = absinfo          # code -> (min, max)
         self.deadzone = float(deadzone)
         self._by_abs = {codes["steer"]: "steer", codes["throttle"]: "throttle",
-                        codes["reverse"]: "reverse", codes["dpad"]: "dpad"}
+                        codes["reverse"]: "reverse", codes["dpad"]: "dpad", codes["dpad_y"]: "dpad_y"}
         self._by_key = {codes["deadman"]: "deadman", codes["record"]: "record", codes["mark"]: "mark",
                         codes["center"]: "center", codes["quit"]: "quit"}
 
@@ -130,6 +130,8 @@ class DS4Mapper:
                 return InputEvent(EventKind.REVERSE_AXIS, self.norm_trigger(code, value))
             if role == "dpad" and value != 0:
                 return InputEvent(EventKind.STEER_STEP, 1 if value > 0 else -1)
+            if role == "dpad_y" and value != 0:         # 위(-1) = 한 단계 빠르게, 아래(+1) = 한 단계 느리게
+                return InputEvent(EventKind.LEVEL_STEP, -1 if value > 0 else 1)
             return None
         if ev_type == EV_KEY:
             role = self._by_key.get(code)
@@ -249,29 +251,41 @@ class AxisSync:
     evdev 는 값이 바뀔 때만 이벤트를 주고, 주 루프가 잠깐 멈춘 사이 큐가 넘치면 이벤트를 버린다 (SYN_DROPPED).
     그때 "R2 를 놓았다"가 버려지면 패드는 멀쩡한데 차는 계속 달린다 (링크 감시도 감시 스레드도 잡지 못한다).
     그래서 조향·전진·후진 축은 AXIS_SYNC_SEC 마다, 그리고 SYN_DROPPED 를 보면 즉시 실제 값을 읽어 다르면 바로잡는다.
+
+    주기적인 확인은 두 번에 나눠 한다. 실제 값이 다르다고 곧 놓친 것은 아니다: 커널의 값은 이미 바뀌었는데 그 이벤트가
+    아직 큐에서 읽히지 않았을 뿐일 수 있다 (스틱과 트리거는 가만히 쥐고 있어도 값이 계속 조금씩 바뀐다). 그래서 어긋난
+    축은 표시만 해 두고(_suspect), 다음 poll 까지 그 축의 이벤트가 오지 않았는데 여전히 다를 때만 놓친 것으로 본다.
+    한 번에 판단하던 때에는 실차에서 3분 반 동안 '변화를 놓쳐' 경고가 두 번 잘못 나왔다 (2026-11-24).
     """
 
     def __init__(self, codes: List[int], read_value, interval_sec: float = AXIS_SYNC_SEC, now: Optional[float] = None):
         self._read, self.interval = read_value, float(interval_sec)
         self.raw: Dict[int, int] = {c: read_value(c) for c in codes}    # 시작 값은 이벤트로 내지 않는다
         self._next = (time.monotonic() if now is None else now) + self.interval
+        self._suspect: set = set()          # 지난 확인에서 어긋나 있던 축. 그 뒤로 이벤트가 오면(note) 지워진다
         self.corrections = 0
 
     def note(self, code: int, value: int) -> None:
         if code in self.raw:
             self.raw[code] = value
+            self._suspect.discard(code)     # 이벤트가 왔다: 큐에 있던 것이지 놓친 것이 아니다
 
     def poll(self, now: float, force: bool = False) -> List[Tuple[int, int]]:
-        """놓친 변화의 (축 코드, 실제 값) 목록. 대부분 빈 목록이다."""
-        if not force and now < self._next:
-            return []
-        self._next = now + self.interval
+        """놓친 변화의 (축 코드, 실제 값) 목록. 대부분 빈 목록이다. 큐의 이벤트를 모두 읽은 뒤에(note) 불러야 한다."""
+        check, self._suspect = self._suspect, set()
+        if force:                           # SYN_DROPPED: 큐가 넘쳐 버려진 것이 확실하다. 모든 축을 바로 맞춘다
+            check = set(self.raw)
+            self._next = now + self.interval
         out = []
-        for code, seen in self.raw.items():
-            value = self._read(code)
-            if value != seen:
-                self.raw[code] = value
-                out.append((code, value))
+        for code in self.raw:
+            if code in check:
+                value = self._read(code)
+                if value != self.raw[code]:
+                    self.raw[code] = value
+                    out.append((code, value))
+        if not force and now >= self._next:
+            self._next = now + self.interval
+            self._suspect = {code for code, seen in self.raw.items() if self._read(code) != seen}
         self.corrections += len(out)
         return out
 
@@ -450,7 +464,7 @@ def _main(argv: List[str]) -> int:
     mapper = DS4Mapper(resolve_codes(layout), absinfo)
     codes = resolve_codes(layout)
     role_of_key = {v: k for k, v in codes.items() if k in ("deadman", "record", "mark", "center", "quit")}
-    role_of_abs = {v: k for k, v in codes.items() if k in ("steer", "throttle", "reverse", "dpad")}
+    role_of_abs = {v: k for k, v in codes.items() if k in ("steer", "throttle", "reverse", "dpad", "dpad_y")}
     print(f"장치: {dev.name} ({dev.path})  driver={driver}  → layout={layout}")
     print(f"ABS 축: {sorted(absinfo)}   KEY: {[hex(k) for k in sorted(caps.get(EV_KEY, []))]}")
     print("기대 매핑:", ", ".join(f"{r}=0x{c:03x}" for c, r in sorted(role_of_key.items())),

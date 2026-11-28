@@ -3,7 +3,8 @@
 배선: 모듈 VCC → 핀 2 (5 V), GND → 핀 20, DIN → 핀 19, CS → 핀 24, CLK → 핀 23. SPI1 은 jetson_setup.sh install 이 켠다.
 
   uv run python scripts/dotmatrix_test.py              무늬 10개를 1초씩 (전체 켜기, 끄기, 화살표 4방향, 사각형, X, 테두리, 체크)
-  uv run python scripts/dotmatrix_test.py status       수집기가 그리는 상태 화면을 차례로 (○ 대기 → ● 촬영 중 → □ 번쩍임 → X 오류)
+  uv run python scripts/dotmatrix_test.py status       프로그램이 그리는 상태 화면을 차례로 (○ 대기 → ● 촬영 중 → □ 번쩍임 →
+                                                       가운데 점 준비 중 → 도는 막대 자율주행 → X 오류)
   uv run python scripts/dotmatrix_test.py stress [초]  무늬를 0.1초마다 계속 바꾼다 (기본 120초). 깨지는 점이 보이면 직결이 불안한 것
   uv run python scripts/dotmatrix_test.py off          화면 끄기
 """
@@ -45,6 +46,8 @@ def main(argv) -> int:
             scenes = [("패드 연결, 촬영 안 함 (○ 고정)", DisplayState()),
                       ("촬영 중 (● ↔ ○ 번갈아)", DisplayState(recording=True)),
                       ("□ 불량 표시 (전체 켜짐)", DisplayState(recording=True, flash=True)),
+                      ("추론기: 준비 중, 모델을 여는 동안 (가운데 점 고정)", DisplayState(busy=True)),
+                      ("추론기: 자율주행 중 (막대가 돈다)", DisplayState(auto=True)),
                       ("패드 끊김·오류 (X 빠른 깜빡임)", DisplayState(error=True))]
             for name, st in scenes:
                 print(f">>> {name}", flush=True)
@@ -66,7 +69,7 @@ def main(argv) -> int:
             print(f">>> {name}", flush=True)
             chip.show(rows); time.sleep(1.0)
         chip.show(PATTERNS["stop"]); time.sleep(1.0)
-        print("완료. 화살표가 돌아가 보여도 고칠 것은 없다: 수집기가 쓰는 화면(○ ● X)은 돌리거나 뒤집어도 똑같다")
+        print("완료. 화살표가 돌아가 보여도 고칠 것은 없다: 프로그램이 쓰는 화면(○ ● X, 도는 막대)은 돌리거나 뒤집어도 똑같다")
         return 0
     except KeyboardInterrupt:
         return 130

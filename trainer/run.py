@@ -219,10 +219,10 @@ def train(zip_paths: Sequence[str | Path], cfg: Config, name: Optional[str] = No
     k = len(samples.classes)
     log(f"      사진 {len(samples)}장, 조향 클래스 {k}개 {samples.classes}, 모델 입력 {pre.out_width}×{pre.out_height}")
     log(f"      자르는 범위: {describe_crop(pre.crop)} "
-        + ("(가공 프로그램에서 정한 범위)" if samples.crop_from_dataset else "(데이터셋에 범위가 없어 기본값을 씁니다)"))
+        + ("(가공 프로그램에서 지정)" if samples.crop_from_dataset else "(데이터셋에 값이 없어 기본값 사용)"))
     off = int(np.sum(samples.angles != np.array(samples.classes)[samples.labels]))
     if off:
-        log(f"      클래스에 없는 각도의 사진 {off}장은 가장 가까운 클래스로 묶었습니다.")
+        log(f"      클래스 목록에 없는 각도의 사진 {off}장은 가장 가까운 클래스로 분류했다.")
     if len(samples) < 3 * k:
         raise TrainError(f"사진이 너무 적습니다: {len(samples)}장 (클래스 {k}개)")
 
@@ -236,24 +236,25 @@ def train(zip_paths: Sequence[str | Path], cfg: Config, name: Optional[str] = No
     if len(split["val"]) == 0:
         raise TrainError("검증(val) 데이터가 0장입니다. training.split.val 을 키우거나 사진을 더 모으세요")
     train_counts, (top_train, base_train), (top_val, base_val) = split_baselines(samples, split, t.augment.hflip)
+    # 시험 보고서의 "기준선" 줄과 같은 말로 적는다 (trainer/metrics.py format_report)
     if top_train == top_val:
-        log(f"      참고: 가장 많은 {samples.classes[top_train]}° 만 답해도 정확도가 train {base_train:.3f}, val {base_val:.3f} 입니다. "
-            "이보다 높아야 배운 것입니다.")
+        log(f"      기준선 (가장 많은 {samples.classes[top_train]}°만 답할 때의 정확도): "
+            f"train {base_train:.3f}, val {base_val:.3f}. 이 값을 넘어야 학습된 것이다.")
     else:
-        log(f"      참고: 한 가지 각도만 답해도 정확도가 train {base_train:.3f} ({samples.classes[top_train]}°), "
-            f"val {base_val:.3f} ({samples.classes[top_val]}°) 입니다. 이보다 높아야 배운 것입니다.")
+        log(f"      기준선 (가장 많은 각도만 답할 때의 정확도): train {base_train:.3f} ({samples.classes[top_train]}°), "
+            f"val {base_val:.3f} ({samples.classes[top_val]}°). 이 값을 넘어야 학습된 것이다.")
     missing = [f"{c}°" for c, n in zip(samples.classes, class_counts(samples.labels[split["train"]], k)) if n == 0]
     if missing:
-        log(f"      주의: 학습 데이터에 {', '.join(missing)} 사진이 한 장도 없습니다. 모델은 이 방향을 배울 수 없습니다.")
+        log(f"      주의: 학습 데이터에 {', '.join(missing)} 사진이 없다. 모델은 이 각도를 학습할 수 없다.")
 
     # 3. DataLoader ---------------------------------------------------------
     log("[3/7] DataLoader")
     loaders = make_loaders(samples, split, t.loader.batch_size, t.loader.shuffle, t.augment.hflip,
                            t.loader.num_workers, seed=t.seed)
-    flip_note = {"none": "좌우 반전 없음", "random": "좌우 반전: 절반 확률",
-                 "both": "좌우 반전: 원본 + 뒤집은 것"}[t.augment.hflip]
-    log(f"      배치 {t.loader.batch_size}장, 학습 데이터 섞기 {'켬' if t.loader.shuffle else '끔'}, {flip_note} "
-        f"→ 한 에폭에 {len(loaders['train'])} 배치 ({len(loaders['train'].dataset)}장)")
+    flip_note = {"none": "좌우 반전 없음", "random": "좌우 반전 확률 0.5",
+                 "both": "좌우 반전 추가 (원본 + 반전)"}[t.augment.hflip]
+    log(f"      배치 크기 {t.loader.batch_size}, 학습 데이터 섞기 {'사용' if t.loader.shuffle else '미사용'}, {flip_note} "
+        f"→ 에폭당 {len(loaders['train'])} 배치 ({len(loaders['train'].dataset)}장)")
 
     # 4. 모델 ---------------------------------------------------------------
     log("[4/7] 모델")
@@ -278,13 +279,13 @@ def train(zip_paths: Sequence[str | Path], cfg: Config, name: Optional[str] = No
     optimizer = build_optimizer(model, o.name, o.lr, o.weight_decay, o.momentum)
     scheduler = build_scheduler(optimizer, t.epochs, o.schedule, o.warmup_epochs, o.min_lr_ratio)
     log(f"      {t.loss.name} (클래스 가중치 {t.loss.class_weight}), {o.name} lr={o.lr:g}, 학습률 스케줄 {o.schedule}")
-    log(f"      참고: 아무것도 배우지 않은 모델의 손실은 약 ln({k}) = {np.log(k):.3f} 입니다.")
+    log(f"      참고: 학습 전 손실은 약 ln({k}) = {np.log(k):.3f} ({k}개 클래스에 같은 확률을 줄 때의 값)")
 
     # 6. 학습 ---------------------------------------------------------------
     es = t.early_stopping
     run_dir = make_run_dir(t.output_root, name)        # 학습 전에 만든다: 쓸 수 없는 곳이면 여기서 바로 멈춘다
     log(f"[6/7] 학습 (최대 {t.epochs} 에폭" + (f", 조기 종료 patience {es.patience}" if es.enabled else "")
-        + "). 그만하려면 Ctrl+C: 그때까지 가장 좋았던 모델로 마무리한다")
+        + "). Ctrl+C 로 중단하면 val loss 가 가장 낮은 모델을 저장한다")
     try:
         history = fit(model, loaders["train"], loaders["val"], loss_fn, optimizer, scheduler, device, t.epochs,
                       early_stopping=es.enabled, patience=es.patience, min_delta=es.min_delta,

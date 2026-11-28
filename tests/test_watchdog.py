@@ -4,6 +4,7 @@ import sys
 import pytest
 
 import collector.app as app_mod
+import common.driveapp as drive_mod
 from collector.app import WATCHDOG_SEC, _safe_write
 from common.config import DEFAULT_CONFIG_PATH, load_config
 from common.events import EventKind as K, InputEvent
@@ -23,7 +24,7 @@ class _Quiet(InputDevice):
 def _collector(tmp_path, monkeypatch):
     cfg = load_config(DEFAULT_CONFIG_PATH)
     cfg.recording.root = str(tmp_path / "dataset")
-    monkeypatch.setattr(app_mod, "create_input", lambda cfg_, override: _Quiet())
+    monkeypatch.setattr(drive_mod, "create_input", lambda cfg_, override: _Quiet())
     return app_mod.Collector(cfg, mock=True, skip_checks=True)
 
 

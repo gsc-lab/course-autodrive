@@ -19,7 +19,7 @@ def screen_handler(check: bool) -> logging.Handler:
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="collector", description="차선 유지 RC카 데이터 수집기")
     p.add_argument("--config", help="config.yaml 경로 (기본: 저장소 루트)")
-    p.add_argument("--mock", action="store_true", help="PC 테스트: 가짜 차량·카메라, 키보드 입력")
+    p.add_argument("--mock", action="store_true", help="PC 테스트: 모의 차량·카메라, 키보드 입력")
     p.add_argument("--input", choices=["ds4", "keyboard"], help="입력 장치 강제 지정")
     p.add_argument("--skip-checks", action="store_true", help="시작 전 점검 생략 (디버깅용)")
     p.add_argument("--check", action="store_true",
@@ -35,7 +35,8 @@ def main(argv=None) -> int:
 
     log_dir = Path(cfg.recording.root)
     log_dir.mkdir(parents=True, exist_ok=True)
-    handlers = [logging.FileHandler(log_dir / "collector.log", encoding="utf-8")]
+    from common.bgio import BackgroundFileHandler              # 로그 파일은 뒤의 스레드가 쓴다 (주 루프가 SD 카드에 막히지 않게)
+    handlers = [BackgroundFileHandler(log_dir / "collector.log")]
     handlers.append(screen_handler(args.check))
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s", handlers=handlers)
@@ -55,6 +56,9 @@ def main(argv=None) -> int:
         except PreflightError as e:
             print(f"[시작 불가] {e}", file=sys.stderr)
             return 3
+        except KeyboardInterrupt:                               # 준비하는 동안 Ctrl+C: 연 장치는 이미 놓았다
+            print("\n[중단] 시작하기 전에 멈췄습니다.", file=sys.stderr)
+            return 130
         except Exception as e:
             logging.getLogger("collector").exception("초기화 실패")
             print(f"[초기화 실패] {e}", file=sys.stderr)

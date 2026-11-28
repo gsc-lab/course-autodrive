@@ -108,7 +108,7 @@ def analyze(run_dir: str | Path, samples: Optional[Samples] = None, data: Option
                              "학습 뒤에 zip 이 바뀌었다면 다시 학습하세요")
         idx = split["test"]
         if len(idx) == 0:
-            log("      시험(test) 데이터가 0장이라 분석을 건너뜁니다 (training.split.test 가 0).")
+            log("      test 사진이 0장이므로 분석을 생략한다 (training.split.test = 0).")
             return None
 
     loader = DataLoader(SteeringDataset(samples.images[idx], samples.labels[idx], classes, hflip="none"),

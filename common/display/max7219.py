@@ -13,7 +13,7 @@ import struct
 from typing import List, Optional
 
 from common.display.base import Display, DisplayState
-from common.display.glyphs import CROSS, ERROR_BLINK_HZ, flip_horizontal, render, rotate
+from common.display.glyphs import CROSS, ERROR_BLINK_HZ, flip_horizontal, render, rotate, spin_phase
 
 log = logging.getLogger(__name__)
 
@@ -91,7 +91,7 @@ class Max7219Display(Display):
     def update(self, st: DisplayState, now: float) -> None:
         blink_on = int(now * self.blink_hz * 2) % 2 == 0
         fast_on = int(now * ERROR_BLINK_HZ * 2) % 2 == 0
-        rows = self._oriented(render(st, blink_on, fast_on))
+        rows = self._oriented(render(st, blink_on, fast_on, spin_phase(now)))
         if rows != self._last:            # 바뀐 프레임만 보낸다
             self.chip.show(rows)
             self._last = rows

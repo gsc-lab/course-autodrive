@@ -1,4 +1,4 @@
-"""상태 표시 장치 인터페이스. 수집기(나중에는 추론기)가 주기적으로 update() 를 부른다."""
+"""상태 표시 장치 인터페이스. 수집기와 추론기가 주기적으로 update() 를 부른다."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -9,6 +9,8 @@ class DisplayState:
     recording: bool = False     # 촬영(녹화) 중
     error: bool = False         # 패드 끊김·카메라 끊김 등으로 멈춘 상태
     flash: bool = False         # □ 불량 표시를 누른 직후 잠깐 True (화면 전체가 한 번 번쩍인다)
+    auto: bool = False          # 자율주행 중 (추론기)
+    busy: bool = False          # 준비 중: 모델을 여는 동안 (추론기. 처음에는 엔진을 만드느라 수십 초가 걸린다)
 
 
 class Display:

@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "task": "classification",
+  "model": "tiny (테스트용, 학습하지 않음)",
+  "classes": [
+    30,
+    60,
+    90,
+    120,
+    150
+  ],
+  "preprocess": {
+    "crop_top_ratio": 0.4,
+    "crop_bottom_ratio": 1.0,
+    "out_width": 16,
+    "out_height": 8,
+    "color": "RGB",
+    "scale": "0-1",
+    "layout": "CHW",
+    "dtype": "float32"
+  },
+  "input": {
+    "name": "input",
+    "shape": [
+      1,
+      3,
+      8,
+      16
+    ],
+    "dtype": "float32",
+    "color": "RGB",
+    "range": "0-1",
+    "layout": "NCHW"
+  },
+  "output": {
+    "name": "output",
+    "shape": [
+      1,
+      5
+    ],
+    "dtype": "float32",
+    "semantics": "logits over classes; steering angle = classes[argmax(output)]"
+  },
+  "onnx": {
+    "file": "model.onnx",
+    "opset": 17,
+    "sha256": "0e54912f7090524e1e8d22025eb6190fc65b7191b0c40e0a6bacb4f8c5163b02"
+  },
+  "training": {
+    "run_id": "tiny_model"
+  }
+}

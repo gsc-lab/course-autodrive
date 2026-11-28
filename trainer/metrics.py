@@ -100,8 +100,8 @@ def format_report(cm: np.ndarray, class_names: List[str]) -> str:
                      + "".join(rjust(f"{r[key]:.3f}", 9) for key in ("accuracy", "precision", "recall", "f1")))
     lines += ["",
               f"전체 정확도        {s['accuracy']:.3f}   ({int(np.trace(cm))} / {s['samples']})",
-              f"기준선             {s['baseline_accuracy']:.3f}   (가장 많은 {class_names[s['baseline_class_index']]} 만 답해도 나오는 정확도)",
-              f"한 칸 이내 정확도  {s['within_one']:.3f}   (정답 또는 바로 옆 클래스로 답한 비율)",
+              f"기준선             {s['baseline_accuracy']:.3f}   (가장 많은 {class_names[s['baseline_class_index']]}만 답할 때의 정확도)",
+              f"한 칸 이내 정확도  {s['within_one']:.3f}   (정답이거나 이웃 클래스로 답한 비율)",
               f"매크로 평균        정밀도 {s['macro_precision']:.3f}   재현율 {s['macro_recall']:.3f}   "
               f"F1 {s['macro_f1']:.3f}"]
     return "\n".join(lines)

@@ -129,15 +129,18 @@ def test_a_value_missing_from_the_file_can_still_be_written(tmp_path):
     ({"training": {"optimizer": {"lr": 0}}}, {"trainer"}),
     ({"preprocess": {"out_height": 0}}, {"trainer", "curator"}),        # 가공 프로그램도 "모델이 보는 사진"을 그리려고 읽는다
     ({"preprocess": {"crop_top_ratio": 1.0}}, {"trainer", "curator"}),
-    ({"hardware": {"motor": {"pwm_hz": 5000}}}, {"collector"}),
-    ({"input": {"ds4": {"link_timeout_sec": 0.01}}}, {"collector"}),
-    ({"display": {"rotate": 45}}, {"collector"}),
-    ({"safety": {"deadman_sec": "soon"}}, {"collector"}),
+    ({"hardware": {"motor": {"pwm_hz": 5000}}}, {"collector", "inference"}),      # 차에서 도는 두 프로그램
+    ({"input": {"ds4": {"link_timeout_sec": 0.01}}}, {"collector", "inference"}),
+    ({"display": {"rotate": 45}}, {"collector", "inference"}),
+    ({"safety": {"deadman_sec": "soon"}}, {"collector", "inference"}),
     ({"curator": {"thumb_px": 8}}, {"curator"}),
-    ({"steering": {"center": 100}}, {"collector", "curator"}),
-    ({"throttle": {"levels": [60, 30]}}, {"collector", "curator"}),
-    ({"recording": {"interval_sec": 5}}, {"collector", "curator"}),
-    ({"camera": {"width": "wide"}}, {"collector", "curator"}),
+    ({"steering": {"center": 100}}, {"collector", "inference", "curator"}),
+    ({"throttle": {"levels": [60, 30]}}, {"collector", "inference", "curator"}),
+    ({"recording": {"interval_sec": 5}}, {"collector", "inference", "curator"}),
+    ({"camera": {"width": "wide"}}, {"collector", "inference", "curator"}),
+    ({"inference": {"smoothing": "average"}}, {"inference"}),                       # 추론 값의 오타는 수집기를 세우지 않는다
+    ({"inference": {"window": 0}}, {"inference"}),
+    ({"inference": {"max_frame_age_sec": 10}}, {"inference"}),
 ])
 def test_each_program_checks_only_the_sections_it_reads(tmp_path, tree, stopped):
     p = _write(tmp_path, tree)
@@ -162,7 +165,7 @@ def test_unknown_keys_and_broken_yaml_stop_every_program(tmp_path):
         with pytest.raises(ConfigError, match="YAML"):
             load_config(broken, program=program)
     with pytest.raises(KeyError):
-        load_config(DEFAULT_CONFIG_PATH, program="inference")       # 아직 없는 프로그램 이름: 조용히 넘어가지 않는다
+        load_config(DEFAULT_CONFIG_PATH, program="autopilot")       # 없는 프로그램 이름: 조용히 넘어가지 않는다
     with pytest.raises(ValueError, match="없는 절"):
         validate(Config(), ["steering", "trainning"])
 
@@ -182,6 +185,7 @@ def test_collector_runs_with_broken_pc_only_values_and_still_writes_its_session_
     """차의 config.yaml 에서 2부(학습 값)가 틀려 있어도 수집기는 달리고, 세션 기록(JSON)도 쓴다.
     검사하지 않은 절에는 YAML 이 날짜로 읽은 값처럼 json 이 받지 않는 것이 남을 수 있다."""
     import collector.app as app_mod
+    import common.driveapp as drive_mod
     from common.events import EventKind as K, InputEvent as E
     from test_session_and_collector import ScriptedInput
 
@@ -198,7 +202,7 @@ def test_collector_runs_with_broken_pc_only_values_and_still_writes_its_session_
     cfg.recording.root = str(tmp_path / "dataset")
     cfg.recording.interval_sec = cfg.recording.interval_min = 0.1
     scripted = ScriptedInput([E(K.DEADMAN, True), E(K.THROTTLE_AXIS, 1.0), E(K.RECORD_TOGGLE)])
-    monkeypatch.setattr(app_mod, "create_input", lambda cfg_, kind: scripted)
+    monkeypatch.setattr(drive_mod, "create_input", lambda cfg_, kind: scripted)
     col = app_mod.Collector(cfg, mock=True, skip_checks=True)
     t_end = time.monotonic() + 0.4
     while time.monotonic() < t_end:
